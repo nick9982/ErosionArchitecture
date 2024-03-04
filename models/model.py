@@ -162,7 +162,7 @@ def summarizePerformance(step, g_model, test_data_size, train_data_size, data, n
         inputImage, _ = data.getImages()
         pyplot.subplot(3, n_samples, 1+i)
         pyplot.axis('off')
-        pyplot.imshow(inputImage)
+        pyplot.imshow(inputImage[:, :, 0])
         data.iterateImage()
     
     data.setIndex(train_data_size)
@@ -170,7 +170,9 @@ def summarizePerformance(step, g_model, test_data_size, train_data_size, data, n
     for i in range(n_samples):
         data.loadImage(i)
         inputImage, _ = data.getImages()
+        inputImage = np.expand_dims(inputImage, axis=0)
         fake = g_model.predict(inputImage)
+        fake = np.squeeze(fake)
         pyplot.subplot(3, n_samples, 1 + n_samples + i)
         pyplot.axis('off')
         pyplot.imshow(fake)
@@ -186,18 +188,18 @@ def summarizePerformance(step, g_model, test_data_size, train_data_size, data, n
         pyplot.imshow(outputImage[:, :, 0])
         data.iterateImage()
 
-    filename1 = 'plot_%06d.png' % (step+1)
+    filename1 = 'training_data/plot_%06d.png' % (step+1)
     pyplot.savefig(filename1)
     pyplot.close()
 
-    filename2 = 'model_%06d.h5' % (step+1)
+    filename2 = 'training_data/model_%06d.h5' % (step+1)
 
     g_model.save(filename2)
     print('>Saved: %s and %s' % (filename1, filename2))
 
 
 
-def train(d_model, g_model, gan_model, n_epochs=5, n_batch=1):
+def train(d_model, g_model, gan_model, n_epochs=25, n_batch=1):
     train_data_size = 1000
     test_data_size = 100
     n_patch = d_model.output_shape[1]
@@ -235,9 +237,12 @@ def train(d_model, g_model, gan_model, n_epochs=5, n_batch=1):
 
         d_loss2 = d_model.train_on_batch(x_fake, y_fake)
 
-        g_loss, _, _ = gan_model.train_on_batch(inputImage, [y_real, x_real])
+        g_loss, d_loss3, gen_loss = gan_model.train_on_batch(inputImage, [y_real, x_real])
+
         
         print('>%d, d1[%.3f] d2[%.3f] g[%.3f]' % (i+1, d_loss1, d_loss2, g_loss))
-        if (i+1) % (bat_per_epo*10) == 0:
+        print('d3[%.3f], gen[%.3f]' % (d_loss3, gen_loss))
+
+        if (i+1) % (train_data_size) == 0:
             summarizePerformance(i, g_model, test_data_size, train_data_size, data)
             data.setIndex(0)
