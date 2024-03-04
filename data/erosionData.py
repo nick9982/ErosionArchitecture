@@ -8,8 +8,8 @@ import numpy as np
 class ErosionData:
     def __init__(self, data_directory):
         self.data_directory = data_directory
-        if self.data_directory[-1] != '\\':
-            self.data_directory += '\\'
+        if self.data_directory[-1] != '/':
+            self.data_directory += '/'
         self.images = []
         for dirpath, dirnames, filenames in os.walk(data_directory):
             for filename in [f for f in filenames if f.startswith('Input')]:

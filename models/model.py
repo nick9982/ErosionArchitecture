@@ -32,37 +32,36 @@ def define_discriminator(imageShape=(256, 256, 3)):
     init = RandomNormal(stddev=0.02)
 
     in_image = Input(shape=imageShape)
-    print('inshape: ' + str(in_image.shape))
 
     #C128
     d = Conv2D(128, (3, 3), strides=(1, 1), padding='same', kernel_initializer=init)(in_image)
-    print('dshape: ' + str(d.shape))
     d = MaxPooling2D(pool_size=(2, 2))(d)
-    d = LeakyReLU(negative_slope=0.2)(d)
+    d = LeakyReLU(alpha=0.2)(d)
 
     #C256
     d = Conv2D(256, (3, 3), strides=(1, 1), padding='same', kernel_initializer=init)(d)
     d = MaxPooling2D(pool_size=(2, 2))(d)
     d = BatchNormalization()(d)
-    d = LeakyReLU(negative_slope=0.2)(d)
+    d = LeakyReLU(alpha=0.2)(d)
 
     #C512
     d = Conv2D(512, (3, 3), strides=(1, 1), padding='same', kernel_initializer=init)(d)
     d = MaxPooling2D(pool_size=(2, 2))(d)
     d = BatchNormalization()(d)
-    d = LeakyReLU(negative_slope=0.2)(d)
+    d = LeakyReLU(alpha=0.2)(d)
 
     #C512
     d = Conv2D(512, (3, 3), strides=(1, 1), padding='same', kernel_initializer=init)(d)
     d = MaxPooling2D(pool_size=(2, 2))(d)
     d = BatchNormalization()(d)
-    d = LeakyReLU(negative_slope=0.2)(d)
+    d = LeakyReLU(alpha=0.2)(d)
 
     #Patch output
     d = Conv2D(1, (4, 4), strides=(2, 2), padding='same', kernel_initializer=init)(d)
     d = Activation('sigmoid')(d)
 
     model = Model(in_image, d)
+    model.compile(loss='mse', optimizer=Adam(learning_rate=0.0002, beta_1=0.5), loss_weights=[0.5])
     return model
 
 
@@ -74,7 +73,7 @@ def encoder_block(layer_in, n_filters, batchnorm=True):
     if batchnorm:
         g = BatchNormalization()(g, training=True)
 
-    g = LeakyReLU(negative_slope=0.2)(g)
+    g = LeakyReLU(alpha=0.2)(g)
     return g, skip
 
 def decoder_block(layer_in, skip_in, n_filters, dropout=True):
@@ -87,7 +86,7 @@ def decoder_block(layer_in, skip_in, n_filters, dropout=True):
     #convolution, reduced features
     g = Conv2D(n_filters, (3, 3), strides=(1, 1), padding='same', kernel_initializer=init)(g)
     g = BatchNormalization()(g, training=True)
-    g = LeakyReLU(negative_slope=0.2)(g)
+    g = LeakyReLU(alpha=0.2)(g)
 
     #upsampling
     g = Conv2DTranspose(n_filters, (3, 3), strides=(2, 2), padding='same', kernel_initializer=init)(g)
@@ -112,7 +111,7 @@ def define_generator(image_shape=(256, 256, 3)):
     # bottom of U
     g = Conv2D(512, (3, 3), strides=(1, 1), padding='same', kernel_initializer=init)(e)
     g = BatchNormalization()(g, training=True)
-    g = LeakyReLU(negative_slope=0.2)(g)
+    g = LeakyReLU(alpha=0.2)(g)
 
     g = Conv2DTranspose(512, (3, 3), strides=(2, 2), padding='same', kernel_initializer=init)(g)
     g = BatchNormalization()(g, training=True)
@@ -130,7 +129,7 @@ def define_generator(image_shape=(256, 256, 3)):
     
     d = Conv2D(64, (3, 3), strides=(1, 1), padding='same', kernel_initializer=init)(d)
     d = BatchNormalization()(d, training=True)
-    d = LeakyReLU(negative_slope=0.2)(d)
+    d = LeakyReLU(alpha=0.2)(d)
 
     out_image = Conv2D(1, (1, 1), strides=(1, 1), padding='same', kernel_initializer=init)(d)
     out_image = Activation('tanh')(out_image)
@@ -203,7 +202,7 @@ def train(d_model, g_model, gan_model, n_epochs=5, n_batch=1):
     test_data_size = 100
     n_patch = d_model.output_shape[1]
 
-    data = ErosionData('D:\\Data')
+    data = ErosionData('/mnt/ml/Data/')
 
     bat_per_epo = int(train_data_size / n_batch)
 
@@ -220,16 +219,17 @@ def train(d_model, g_model, gan_model, n_epochs=5, n_batch=1):
         strength = inputImage[:, :, 2]
         outputDEM = outputImage[:, :, 0]
 
-        y_fake = np.zeros((64, 64, 1))
-        y_real = np.ones((64, 64, 1))
+        y_fake = np.zeros((1, 8, 8, 1))
+        y_real = np.ones((1, 8, 8, 1))
 
         x_real = np.stack([DEM, softness, strength], axis=-1)
         x_real = np.expand_dims(x_real, axis=0)
-        print('xrel shape: ' + str(x_real.shape))
 
         d_loss1 = d_model.train_on_batch(x_real, y_real)
 
+        inputImage = np.expand_dims(inputImage, axis=0)
         fake = g_model.predict(inputImage)
+        fake = np.squeeze(fake)
         x_fake = np.stack([fake, softness, strength], axis=-1)
         x_fake = np.expand_dims(x_fake, axis=0)
 
