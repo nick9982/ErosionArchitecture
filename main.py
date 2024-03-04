@@ -1,7 +1,5 @@
 import sys
-sys.path.append('data')
 sys.path.append('models')
-from erosionData import ErosionData
 from model import define_gan, define_discriminator, define_generator, train
 import numpy as np
 import tensorflow as tf
