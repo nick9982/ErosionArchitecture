@@ -214,7 +214,7 @@ def train(d_model, g_model, gan_model, n_epochs=5, n_batch=1):
             return
 
         inputImage, outputImage = data.getImages()
-        DEM = inputImage[:, :, 0]
+        # DEM = inputImage[:, :, 0]
         softness = inputImage[:, :, 1]
         strength = inputImage[:, :, 2]
         outputDEM = outputImage[:, :, 0]
@@ -222,7 +222,7 @@ def train(d_model, g_model, gan_model, n_epochs=5, n_batch=1):
         y_fake = np.zeros((1, 8, 8, 1))
         y_real = np.ones((1, 8, 8, 1))
 
-        x_real = np.stack([DEM, softness, strength], axis=-1)
+        x_real = np.stack([outputDEM, softness, strength], axis=-1)
         x_real = np.expand_dims(x_real, axis=0)
 
         d_loss1 = d_model.train_on_batch(x_real, y_real)
