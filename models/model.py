@@ -107,6 +107,8 @@ def define_generator(image_shape=(256, 256, 3)):
     e, s3 = encoder_block(e, 256) # O 32
     e, s4 = encoder_block(e, 512) # O 16
     e, s5 = encoder_block(e, 512) # O 8
+    e, s6 = encoder_block(e, 512) # O 4
+    e, s7 = encoder_block(e, 512) # O 2
 
     # bottom of U
     g = Conv2D(512, (3, 3), strides=(1, 1), padding='same', kernel_initializer=init)(e)
@@ -118,7 +120,9 @@ def define_generator(image_shape=(256, 256, 3)):
     g = Dropout(0.5)(g, training=True)
 
     # decoder model
-    d = decoder_block(g, s5, 512) # O 16
+    d = decoder_block(g, s7, 512) # O 4
+    d = decoder_block(d, s6, 512) # O 8
+    d = decoder_block(d, s5, 512) # O 16
     d = decoder_block(d, s4, 512) # O 32
     d = decoder_block(d, s3, 256, dropout=False) # O 64
     d = decoder_block(d, s2, 128, dropout=False) # O 128
