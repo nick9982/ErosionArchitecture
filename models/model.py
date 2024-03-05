@@ -241,7 +241,7 @@ def train(d_model, g_model, gan_model, n_epochs=25, n_batch=1):
 
         d_loss2 = d_model.train_on_batch(x_fake, y_fake)
 
-        g_loss, d_loss3, gen_loss = gan_model.train_on_batch(inputImage, [y_real, x_real])
+        g_loss, d_loss3, gen_loss = gan_model.train_on_batch(inputImage, [y_real, np.expand_dims(np.expand_dims(outputDEM, axis=0), axis=-1)])
 
         
         print('>%d, d1[%.3f] d2[%.3f] g[%.3f]' % (i+1, d_loss1, d_loss2, g_loss))
