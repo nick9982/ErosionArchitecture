@@ -1,27 +1,20 @@
 import sys
 sys.path.append('data')
 sys.path.append('models')
-from numpy import load
-from numpy import zeros
-from numpy import ones
-from numpy.random import randint
 from keras.optimizers import Adam
 from keras.initializers import RandomNormal
 from keras.models import Model
 from keras.layers import Input
-from keras.layers import Conv3D
 from keras.layers import Conv2D
 from keras.layers import Conv2DTranspose
 from keras.layers import LeakyReLU
 from keras.layers import Activation
 from keras.layers import Concatenate
 from keras.layers import Dropout
-from keras.layers import Dense
 from keras.layers import BatchNormalization
 from keras.layers import LeakyReLU
 from matplotlib import pyplot
 from keras.layers import MaxPooling2D
-from keras.layers import Flatten
 from keras.layers import Dropout, Activation
 from keras.models import Model
 from erosionData import ErosionData
@@ -68,7 +61,12 @@ def define_discriminator(imageShape=(256, 256, 3)):
 def encoder_block(layer_in, n_filters, batchnorm=True):
     init = RandomNormal(stddev=0.02)
 
-    skip = Conv2D(n_filters, (3, 3), strides=(1, 1), padding='same', kernel_initializer=init)(layer_in)
+    g = Conv2D(n_filters, (3, 3), strides=(1, 1), padding='same', kernel_initializer=init)(layer_in)
+    if batchnorm:
+        g = BatchNormalization()(g, training=True)
+    g = LeakyReLU(alpha=0.2)(g)
+
+    skip = Conv2D(n_filters, (3, 3), strides=(1, 1), padding='same', kernel_initializer=init)(g)
     g = MaxPooling2D(pool_size=(2, 2))(skip)
     if batchnorm:
         g = BatchNormalization()(g, training=True)
@@ -84,6 +82,10 @@ def decoder_block(layer_in, skip_in, n_filters, dropout=True):
     g = Activation('relu')(g)
 
     #convolution, reduced features
+    g = Conv2D(n_filters, (3, 3), strides=(1, 1), padding='same', kernel_initializer=init)(g)
+    g = BatchNormalization()(g, training=True)
+    g = LeakyReLU(alpha=0.2)(g)
+
     g = Conv2D(n_filters, (3, 3), strides=(1, 1), padding='same', kernel_initializer=init)(g)
     g = BatchNormalization()(g, training=True)
     g = LeakyReLU(alpha=0.2)(g)
@@ -106,26 +108,22 @@ def define_generator(image_shape=(256, 256, 3)):
     e, s2 = encoder_block(e, 128) # O 64
     e, s3 = encoder_block(e, 256) # O 32
     e, s4 = encoder_block(e, 512) # O 16
-    e, s5 = encoder_block(e, 512) # O 8
-    e, s6 = encoder_block(e, 512) # O 4
-    e, s7 = encoder_block(e, 512) # O 2
+    e, s5 = encoder_block(e, 1024) # O 8
 
     # bottom of U
-    g = Conv2D(512, (3, 3), strides=(1, 1), padding='same', kernel_initializer=init)(e)
+    g = Conv2D(1024, (3, 3), strides=(1, 1), padding='same', kernel_initializer=init)(e)
     g = BatchNormalization()(g, training=True)
     g = LeakyReLU(alpha=0.2)(g)
 
-    g = Conv2DTranspose(512, (3, 3), strides=(2, 2), padding='same', kernel_initializer=init)(g)
+    g = Conv2DTranspose(1024, (3, 3), strides=(2, 2), padding='same', kernel_initializer=init)(g)
     g = BatchNormalization()(g, training=True)
     g = Dropout(0.5)(g, training=True)
 
     # decoder model
-    d = decoder_block(g, s7, 512) # O 4
-    d = decoder_block(d, s6, 512) # O 8
-    d = decoder_block(d, s5, 512) # O 16
-    d = decoder_block(d, s4, 512) # O 32
-    d = decoder_block(d, s3, 256, dropout=False) # O 64
-    d = decoder_block(d, s2, 128, dropout=False) # O 128
+    d = decoder_block(g, s5, 512) # O 32
+    d = decoder_block(d, s4, 256) # O 64
+    d = decoder_block(d, s3, 128, dropout=False) # O 128
+    d = decoder_block(d, s2, 128, dropout=False) # O 256
 
     #output section
     d = Concatenate()([d, s1])
@@ -203,7 +201,7 @@ def summarizePerformance(step, g_model, test_data_size, train_data_size, data, n
 
 
 
-def train(d_model, g_model, gan_model, n_epochs=25, n_batch=1):
+def train(d_model, g_model, gan_model, n_epochs=100, n_batch=1):
     train_data_size = 1000
     test_data_size = 100
     n_patch = d_model.output_shape[1]
@@ -241,11 +239,11 @@ def train(d_model, g_model, gan_model, n_epochs=25, n_batch=1):
 
         d_loss2 = d_model.train_on_batch(x_fake, y_fake)
 
-        g_loss, d_loss3, gen_loss = gan_model.train_on_batch(inputImage, [y_real, np.expand_dims(np.expand_dims(outputDEM, axis=0), axis=-1)])
+        g_loss, gen_loss, d_loss3 = gan_model.train_on_batch(inputImage, [y_real, np.expand_dims(np.expand_dims(outputDEM, axis=0), axis=-1)])
 
         
-        print('>%d, d1[%.3f] d2[%.3f] g[%.3f]' % (i+1, d_loss1, d_loss2, g_loss))
-        print('d3[%.3f], gen[%.3f]' % (d_loss3, gen_loss))
+        print('>%d, d1[%.3f] d2[%.3f] gan[%.3f]' % (i+1, d_loss1, d_loss2, g_loss))
+        print('gen[%.3f], d3[%.3f]' % (gen_loss, d_loss3))
 
         if (i+1) % (train_data_size) == 0:
             summarizePerformance(i, g_model, test_data_size, train_data_size, data)
