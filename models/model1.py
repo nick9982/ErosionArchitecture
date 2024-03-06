@@ -159,7 +159,7 @@ def define_gan(g_model, d_model, image_shape):
  opt = Adam(lr=0.0002, beta_1=0.5)
  model.compile(loss=['binary_crossentropy', 'mae'], optimizer=opt, loss_weights=[1,100])
  return model
- 
+
 # load and prepare training images
 def load_real_samples(filename):
  # load compressed arrays
@@ -167,9 +167,10 @@ def load_real_samples(filename):
  # unpack arrays
  X1, X2 = data['arr_0'], data['arr_1']
  # scale from [0,255] to [-1,1]
- X1 = (X1 - 127.5) / 127.5
- X2 = (X2 - 127.5) / 127.5
+ X1 = (X1 - 32767.5) / 32767.5
+ X2 = (X2 - 32767.5) / 32767.5
  return [X1, X2]
+
  
 # select a batch of random samples, returns images and target
 def generate_real_samples(dataset, n_samples, patch_shape):
