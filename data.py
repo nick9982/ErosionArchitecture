@@ -2,9 +2,11 @@
 from os import listdir
 from numpy import asarray
 from numpy import vstack
+import numpy as np
 import tensorflow as tf
 from tensorflow.keras.preprocessing import image
 from numpy import savez_compressed
+import imageio
  
 # load all images in a directory into memory
 def load_images(path, size=(256,256)):
@@ -20,11 +22,15 @@ def load_images(path, size=(256,256)):
          if output not in files:
              continue
 
-         pixels_in = image.load_img(path + filename, target_size=size)
-         pixels_out = image.load_img(path + output, target_size=size)
+         pixels_in = imageio.imread(path + filename)
+         pixels_out = imageio.imread(path + output)
+
          # convert to numpy array
          pixels_in = image.img_to_array(pixels_in)
          pixels_out = image.img_to_array(pixels_out)
+
+         maxval = np.max(pixels_in)
+         print(maxval)
          # split into satellite and map
          src_list.append(pixels_in)
          tar_list.append(pixels_out)
