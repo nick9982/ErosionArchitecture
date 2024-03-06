@@ -12,7 +12,7 @@ import imageio
 def load_images(path, size=(256,256)):
  src_list, tar_list = list(), list()
  # enumerate filenames in directory, assume all are images
- limit, idx = 2000, 0
+ limit, idx = 600, 0
  files = listdir(path)
  for filename in files:
  # load and resize the imageprintf
@@ -26,11 +26,13 @@ def load_images(path, size=(256,256)):
          pixels_out = imageio.imread(path + output)
 
          # convert to numpy array
-         pixels_in = image.img_to_array(pixels_in)
-         pixels_out = image.img_to_array(pixels_out)
+         pixels_in = image.img_to_array(pixels_in, dtype=np.uint16)
+         pixels_out = image.img_to_array(pixels_out, dtype=np.uint16)
 
-         maxval = np.max(pixels_in)
-         print(maxval)
+         pixels_in = pixels_in[:256, :256]
+         pixels_out = pixels_out[:256, :256]
+
+         print(pixels_out.shape)
          # split into satellite and map
          src_list.append(pixels_in)
          tar_list.append(pixels_out)

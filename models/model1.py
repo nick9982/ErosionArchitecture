@@ -2,6 +2,7 @@ from numpy import load
 from numpy import zeros
 from numpy import ones
 from numpy.random import randint
+import random
 from keras.optimizers import Adam
 from keras.initializers import RandomNormal
 from keras.models import Model
@@ -30,16 +31,9 @@ def define_discriminator(gen_out_shape, tar_image_shape):
  # target image input
  in_target_image = Input(shape=tar_image_shape)
  # concatenate images channel-wise
-
- x_real = Conv2D(64, (4,4), strides=(1, 1), padding='same', kernel_initializer=init)(in_target_image)
- x_real = LeakyReLU(alpha=0.2)(x_real)
-
- x_gen = Conv2D(64, (4,4), strides=(1, 1), padding='same', kernel_initializer=init)(in_src_image)
- x_gen = LeakyReLU(alpha=0.2)(x_gen)
-
- merged = Concatenate(axis=-1)([x_real, x_gen])
+ merged = Concatenate(axis=-1)([in_src_image, in_target_image])
  # C64
- d = Conv2D(128, (4,4), strides=(2,2), padding='same', kernel_initializer=init)(merged)
+ d = Conv2D(128, (4, 4), strides=(2,2), padding='same', kernel_initializer=init)(merged)
  d = LeakyReLU(alpha=0.2)(d)
  d = Dropout(0.25)(d)
  # C128
@@ -72,7 +66,7 @@ def define_encoder_block(layer_in, n_filters, batchnorm=True):
  # weight initialization
  init = RandomNormal(stddev=0.02)
  # add downsampling layer
- g = Conv2D(n_filters, (4,4), strides=(1,1), padding='same', kernel_initializer=init)(layer_in)
+ g = Conv2D(n_filters, (5, 5), strides=(1,1), dilation_rate=(2, 2), padding='same', kernel_initializer=init)(layer_in)
  if batchnorm:
      g = BatchNormalization()(g, training=True)
  g = LeakyReLU(alpha=0.2)(g)
@@ -99,7 +93,7 @@ def decoder_block(layer_in, skip_in, n_filters, dropout=True):
  g = Concatenate()([g, skip_in])
  g = LeakyReLU(alpha=0.2)(g)
 
- g = Conv2D(n_filters, (4,4), strides=(1,1), padding='same', kernel_initializer=init)(g)
+ g = Conv2D(n_filters, (5,5), strides=(1,1), dilation_rate=(2, 2), padding='same', kernel_initializer=init)(g)
  g = BatchNormalization()(g, training=True)
  g = LeakyReLU(alpha=0.2)(g)
  # relu activation
@@ -135,7 +129,7 @@ def define_generator(image_shape=(256,256,3)):
  d7 = decoder_block(d6, e1, 64, dropout=False)
 
  # output
- g = Conv2DTranspose(1, (4,4), strides=(2,2), padding='same', kernel_initializer=init)(d7)
+ g = Conv2DTranspose(3, (4,4), strides=(2,2), padding='same', kernel_initializer=init)(d7)
  out_image = Activation('tanh')(g)
  # define model
  model = Model(in_image, out_image)
@@ -159,7 +153,7 @@ def define_gan(g_model, d_model, image_shape):
  opt = Adam(lr=0.0002, beta_1=0.5)
  model.compile(loss=['binary_crossentropy', 'mae'], optimizer=opt, loss_weights=[1,100])
  return model
-
+ 
 # load and prepare training images
 def load_real_samples(filename):
  # load compressed arrays
@@ -170,7 +164,6 @@ def load_real_samples(filename):
  X1 = (X1 - 32767.5) / 32767.5
  X2 = (X2 - 32767.5) / 32767.5
  return [X1, X2]
-
  
 # select a batch of random samples, returns images and target
 def generate_real_samples(dataset, n_samples, patch_shape):
@@ -180,6 +173,10 @@ def generate_real_samples(dataset, n_samples, patch_shape):
  ix = randint(0, trainA.shape[0], n_samples)
  # retrieve selected images
  X1, X2 = trainA[ix], trainB[ix]
+ for i in range(n_samples):
+     random_number = random.randint(0, 3)
+     X1[i] = np.rot90(X1[i], random_number)
+     X2[i] = np.rot90(X2[i], random_number)
  # generate 'real' class labels (1)
  y = ones((n_samples, patch_shape, patch_shape, 1))
  return [X1, X2], y
@@ -244,9 +241,9 @@ def train(d_model, g_model, gan_model, dataset, n_epochs=100, n_batch=1):
      # generate a batch of fake samples
      X_fakeB, y_fake = generate_fake_samples(g_model, X_realA, n_patch)
      # update discriminator for real samples
-     d_loss1 = d_model.train_on_batch([X_realA, X_realB[:, :, :, 0]], y_real)
+     d_loss1 = d_model.train_on_batch([X_realA, X_realB], y_real)
      # update discriminator for generated samples
-     d_loss2 = d_model.train_on_batch([X_realA, X_fakeB[:, :, :, 0]], y_fake)
+     d_loss2 = d_model.train_on_batch([X_realA, X_fakeB], y_fake)
      # update the generator
      g_loss, _, _ = gan_model.train_on_batch(X_realA, [y_real, X_realB])
      # summarize performance
@@ -264,9 +261,10 @@ dataset = load_real_samples('../erosion_256.npz')
 print('Loaded', dataset[0].shape, dataset[1].shape)
 # define input shape based on the loaded dataset
 image_shape = dataset[0].shape[1:]
+print('max: ' + str(tf.reduce_max(dataset[0][0]).numpy()))
 print(image_shape)
 # define the models
-d_model = define_discriminator((256, 256, 1), image_shape)
+d_model = define_discriminator(image_shape, image_shape)
 g_model = define_generator(image_shape)
 # define the composite model
 gan_model = define_gan(g_model, d_model, image_shape)
