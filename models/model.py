@@ -1,6 +1,7 @@
 import sys
-sys.path.append('data')
-sys.path.append('models')
+
+sys.path.append("data")
+sys.path.append("models")
 from keras.optimizers import Adam
 from keras.initializers import RandomNormal
 from keras.models import Model
@@ -21,52 +22,61 @@ from erosionData import ErosionData
 from matplotlib import pyplot
 import numpy as np
 
+
 def define_discriminator(imageShape=(256, 256, 3)):
     init = RandomNormal(stddev=0.02)
 
     in_image = Input(shape=imageShape)
 
-    #C128
-    d = Conv2D(128, (3, 3), strides=(1, 1), padding='same', kernel_initializer=init)(in_image)
+    # C128
+    d = Conv2D(128, (3, 3), strides=(1, 1), padding="same", kernel_initializer=init)(
+        in_image
+    )
     d = MaxPooling2D(pool_size=(2, 2))(d)
     d = LeakyReLU(alpha=0.2)(d)
 
-    #C256
-    d = Conv2D(256, (3, 3), strides=(1, 1), padding='same', kernel_initializer=init)(d)
-    d = MaxPooling2D(pool_size=(2, 2))(d)
-    d = BatchNormalization()(d)
-    d = LeakyReLU(alpha=0.2)(d)
-
-    #C512
-    d = Conv2D(512, (3, 3), strides=(1, 1), padding='same', kernel_initializer=init)(d)
+    # C256
+    d = Conv2D(256, (3, 3), strides=(1, 1), padding="same", kernel_initializer=init)(d)
     d = MaxPooling2D(pool_size=(2, 2))(d)
     d = BatchNormalization()(d)
     d = LeakyReLU(alpha=0.2)(d)
 
-    #C512
-    d = Conv2D(512, (3, 3), strides=(1, 1), padding='same', kernel_initializer=init)(d)
+    # C512
+    d = Conv2D(512, (3, 3), strides=(1, 1), padding="same", kernel_initializer=init)(d)
     d = MaxPooling2D(pool_size=(2, 2))(d)
     d = BatchNormalization()(d)
     d = LeakyReLU(alpha=0.2)(d)
 
-    #Patch output
-    d = Conv2D(1, (4, 4), strides=(2, 2), padding='same', kernel_initializer=init)(d)
-    d = Activation('sigmoid')(d)
+    # C512
+    d = Conv2D(512, (3, 3), strides=(1, 1), padding="same", kernel_initializer=init)(d)
+    d = MaxPooling2D(pool_size=(2, 2))(d)
+    d = BatchNormalization()(d)
+    d = LeakyReLU(alpha=0.2)(d)
+
+    # Patch output
+    d = Conv2D(1, (4, 4), strides=(2, 2), padding="same", kernel_initializer=init)(d)
+    d = Activation("sigmoid")(d)
 
     model = Model(in_image, d)
-    model.compile(loss='mse', optimizer=Adam(learning_rate=0.0002, beta_1=0.5), loss_weights=[0.5])
+    model.compile(
+        loss="mse", optimizer=Adam(learning_rate=0.0002, beta_1=0.5), loss_weights=[0.5]
+    )
     return model
 
 
 def encoder_block(layer_in, n_filters, batchnorm=True):
     init = RandomNormal(stddev=0.02)
 
-    g = Conv2D(n_filters, (3, 3), strides=(1, 1), padding='same', kernel_initializer=init)(layer_in)
+    g = Conv2D(
+        n_filters, (3, 3), strides=(1, 1), padding="same", kernel_initializer=init
+    )(layer_in)
     if batchnorm:
         g = BatchNormalization()(g, training=True)
     g = LeakyReLU(alpha=0.2)(g)
 
-    skip = Conv2D(n_filters, (3, 3), strides=(1, 1), padding='same', kernel_initializer=init)(g)
+    skip = Conv2D(
+        n_filters, (3, 3), strides=(1, 1), padding="same", kernel_initializer=init
+    )(g)
     g = MaxPooling2D(pool_size=(2, 2))(skip)
     if batchnorm:
         g = BatchNormalization()(g, training=True)
@@ -74,29 +84,37 @@ def encoder_block(layer_in, n_filters, batchnorm=True):
     g = LeakyReLU(alpha=0.2)(g)
     return g, skip
 
+
 def decoder_block(layer_in, skip_in, n_filters, dropout=True):
     init = RandomNormal(stddev=0.02)
 
-    #concatenate
+    # concatenate
     g = Concatenate()([layer_in, skip_in])
-    g = Activation('relu')(g)
+    g = Activation("relu")(g)
 
-    #convolution, reduced features
-    g = Conv2D(n_filters, (3, 3), strides=(1, 1), padding='same', kernel_initializer=init)(g)
+    # convolution, reduced features
+    g = Conv2D(
+        n_filters, (3, 3), strides=(1, 1), padding="same", kernel_initializer=init
+    )(g)
     g = BatchNormalization()(g, training=True)
     g = LeakyReLU(alpha=0.2)(g)
 
-    g = Conv2D(n_filters, (3, 3), strides=(1, 1), padding='same', kernel_initializer=init)(g)
+    g = Conv2D(
+        n_filters, (3, 3), strides=(1, 1), padding="same", kernel_initializer=init
+    )(g)
     g = BatchNormalization()(g, training=True)
     g = LeakyReLU(alpha=0.2)(g)
 
-    #upsampling
-    g = Conv2DTranspose(n_filters, (3, 3), strides=(2, 2), padding='same', kernel_initializer=init)(g)
+    # upsampling
+    g = Conv2DTranspose(
+        n_filters, (3, 3), strides=(2, 2), padding="same", kernel_initializer=init
+    )(g)
     g = BatchNormalization()(g, training=True)
     if dropout:
         g = Dropout(0.5)(g, training=True)
-    
+
     return g
+
 
 def define_generator(image_shape=(256, 256, 3)):
     init = RandomNormal(stddev=0.02)
@@ -104,46 +122,51 @@ def define_generator(image_shape=(256, 256, 3)):
     in_image = Input(shape=image_shape)
 
     # encoder model
-    e, s1 = encoder_block(in_image, 64, batchnorm=False) # o 128
-    e, s2 = encoder_block(e, 128) # O 64
-    e, s3 = encoder_block(e, 256) # O 32
-    e, s4 = encoder_block(e, 512) # O 16
-    e, s5 = encoder_block(e, 1024) # O 8
+    e, s1 = encoder_block(in_image, 64, batchnorm=False)  # o 128
+    e, s2 = encoder_block(e, 128)  # O 64
+    e, s3 = encoder_block(e, 256)  # O 32
+    e, s4 = encoder_block(e, 512)  # O 16
+    e, s5 = encoder_block(e, 1024)  # O 8
 
     # bottom of U
-    g = Conv2D(1024, (3, 3), strides=(1, 1), padding='same', kernel_initializer=init)(e)
+    g = Conv2D(1024, (3, 3), strides=(1, 1), padding="same", kernel_initializer=init)(e)
     g = BatchNormalization()(g, training=True)
     g = LeakyReLU(alpha=0.2)(g)
 
-    g = Conv2DTranspose(1024, (3, 3), strides=(2, 2), padding='same', kernel_initializer=init)(g)
+    g = Conv2DTranspose(
+        1024, (3, 3), strides=(2, 2), padding="same", kernel_initializer=init
+    )(g)
     g = BatchNormalization()(g, training=True)
     g = Dropout(0.5)(g, training=True)
 
     # decoder model
-    d = decoder_block(g, s5, 512) # O 32
-    d = decoder_block(d, s4, 256) # O 64
-    d = decoder_block(d, s3, 128, dropout=False) # O 128
-    d = decoder_block(d, s2, 128, dropout=False) # O 256
+    d = decoder_block(g, s5, 512)  # O 32
+    d = decoder_block(d, s4, 256)  # O 64
+    d = decoder_block(d, s3, 128, dropout=False)  # O 128
+    d = decoder_block(d, s2, 128, dropout=False)  # O 256
 
-    #output section
+    # output section
     d = Concatenate()([d, s1])
-    d = Activation('relu')(d)
-    
-    d = Conv2D(64, (3, 3), strides=(1, 1), padding='same', kernel_initializer=init)(d)
+    d = Activation("relu")(d)
+
+    d = Conv2D(64, (3, 3), strides=(1, 1), padding="same", kernel_initializer=init)(d)
     d = BatchNormalization()(d, training=True)
     d = LeakyReLU(alpha=0.2)(d)
 
-    out_image = Conv2D(1, (1, 1), strides=(1, 1), padding='same', kernel_initializer=init)(d)
-    out_image = Activation('tanh')(out_image)
+    out_image = Conv2D(
+        1, (1, 1), strides=(1, 1), padding="same", kernel_initializer=init
+    )(d)
+    out_image = Activation("tanh")(out_image)
 
     model = Model(in_image, out_image)
     return model
+
 
 def define_gan(g_model, d_model, image_shape):
     for layer in d_model.layers:
         if not isinstance(layer, BatchNormalization):
             layer.trainable = False
-    
+
     in_src = Input(shape=image_shape)
 
     gen_out = g_model(in_src)
@@ -153,22 +176,27 @@ def define_gan(g_model, d_model, image_shape):
     model.summary()
 
     opt = Adam(learning_rate=0.0002, beta_1=0.5)
-    model.compile(loss=['binary_crossentropy', 'mae'], optimizer=opt, loss_weights=[1, 100])
+    model.compile(
+        loss=["binary_crossentropy", "mae"], optimizer=opt, loss_weights=[1, 100]
+    )
     return model
 
-def summarizePerformance(step, g_model, test_data_size, train_data_size, data, n_samples=3):
+
+def summarizePerformance(
+    step, g_model, test_data_size, train_data_size, data, n_samples=3
+):
     data.setIndex(train_data_size)
     # plot real input images
     for i in range(n_samples):
         data.loadImage(i)
         inputImage, _ = data.getImages()
-        pyplot.subplot(3, n_samples, 1+i)
-        pyplot.axis('off')
+        pyplot.subplot(3, n_samples, 1 + i)
+        pyplot.axis("off")
         pyplot.imshow(inputImage[:, :, 0])
         data.iterateImage()
-    
+
     data.setIndex(train_data_size)
-    #plot generator output
+    # plot generator output
     for i in range(n_samples):
         data.loadImage(i)
         inputImage, _ = data.getImages()
@@ -176,7 +204,7 @@ def summarizePerformance(step, g_model, test_data_size, train_data_size, data, n
         fake = g_model.predict(inputImage)
         fake = np.squeeze(fake)
         pyplot.subplot(3, n_samples, 1 + n_samples + i)
-        pyplot.axis('off')
+        pyplot.axis("off")
         pyplot.imshow(fake)
         data.iterateImage()
 
@@ -185,20 +213,19 @@ def summarizePerformance(step, g_model, test_data_size, train_data_size, data, n
     for i in range(n_samples):
         data.loadImage(i)
         _, outputImage = data.getImages()
-        pyplot.subplot(3, n_samples, 1 + n_samples*2 + i)
-        pyplot.axis('off')
+        pyplot.subplot(3, n_samples, 1 + n_samples * 2 + i)
+        pyplot.axis("off")
         pyplot.imshow(outputImage[:, :, 0])
         data.iterateImage()
 
-    filename1 = 'training_data/plot_%06d.png' % (step+1)
+    filename1 = "training_data/plot_%06d.png" % (step + 1)
     pyplot.savefig(filename1)
     pyplot.close()
 
-    filename2 = 'training_data/model_%06d.h5' % (step+1)
+    filename2 = "training_data/model_%06d.h5" % (step + 1)
 
     g_model.save(filename2)
-    print('>Saved: %s and %s' % (filename1, filename2))
-
+    print(">Saved: %s and %s" % (filename1, filename2))
 
 
 def train(d_model, g_model, gan_model, n_epochs=100, n_batch=1):
@@ -206,7 +233,7 @@ def train(d_model, g_model, gan_model, n_epochs=100, n_batch=1):
     test_data_size = 100
     n_patch = d_model.output_shape[1]
 
-    data = ErosionData('/mnt/ml/Data/')
+    data = ErosionData("/mnt/ml/Data/")
 
     bat_per_epo = int(train_data_size / n_batch)
 
@@ -214,7 +241,7 @@ def train(d_model, g_model, gan_model, n_epochs=100, n_batch=1):
 
     for i in range(n_steps):
         if not data.loadImage(0):
-            print('The data pointer exceeds the size of the dataset.')
+            print("The data pointer exceeds the size of the dataset.")
             return
 
         inputImage, outputImage = data.getImages()
@@ -239,12 +266,14 @@ def train(d_model, g_model, gan_model, n_epochs=100, n_batch=1):
 
         d_loss2 = d_model.train_on_batch(x_fake, y_fake)
 
-        g_loss, gen_loss, d_loss3 = gan_model.train_on_batch(inputImage, [y_real, np.expand_dims(np.expand_dims(outputDEM, axis=0), axis=-1)])
+        g_loss, gen_loss, d_loss3 = gan_model.train_on_batch(
+            inputImage,
+            [y_real, np.expand_dims(np.expand_dims(outputDEM, axis=0), axis=-1)],
+        )
 
-        
-        print('>%d, d1[%.3f] d2[%.3f] gan[%.3f]' % (i+1, d_loss1, d_loss2, g_loss))
-        print('gen[%.3f], d3[%.3f]' % (gen_loss, d_loss3))
+        print(">%d, d1[%.3f] d2[%.3f] gan[%.3f]" % (i + 1, d_loss1, d_loss2, g_loss))
+        print("gen[%.3f], d3[%.3f]" % (gen_loss, d_loss3))
 
-        if (i+1) % (train_data_size) == 0:
+        if (i + 1) % (train_data_size) == 0:
             summarizePerformance(i, g_model, test_data_size, train_data_size, data)
             data.setIndex(0)
