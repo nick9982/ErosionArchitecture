@@ -35,15 +35,21 @@ import subprocess
 import re
 from cleanfida.fid import compute_fid
 import torch
+from lpips.lpips import LPIPS
+
 # from tensorflow import autograd
 # import neptune
 
+lpips = LPIPS(net='alex')
+
 fid_scores = []
+lpips_scores = []
 iterations = []
 iterations_loss = []
 dL1_ls = []
 dL2_ls = []
 gen_loss = []
+lpips_iterations = []
 real_images = np.empty([0, 3, 256, 256])
 fake_images = np.empty([0, 3, 256, 256])
 def saveFIDScoresInGraph():
@@ -62,12 +68,27 @@ def saveFIDScoresInGraph():
     pyplot.savefig('fid_scores.png')
 
 
+def saveLPIPScores():
+    global lpips_scores
+    global lpips_iterations
+    pyplot.cla()
+    pyplot.axis("on")
+
+    pyplot.figure()
+    pyplot.plot(lpips_iterations, lpips_scores, label='lpips')
+
+    pyplot.xlabel('Iteration')
+    pyplot.ylabel('lpips')
+    pyplot.title('lpips')
+
+    pyplot.savefig('lpips.png')
+
 def graph_mse_be_loss():
     global dL1_ls
     global dL2_ls
     global gen_loss
     global iterations_loss
-    pyplot.cla() # Clear the current plot
+    pyplot.cla() 
     pyplot.axis("on")
 
     pyplot.figure()
@@ -90,14 +111,13 @@ def cache_img_for_fid(real_features, generated_features):
     global fake_images
     real = np.array(real_features* 32767.5 + 32767.5, dtype=np.uint16)
     fake = np.array(generated_features* 32767.5 + 32767.5, dtype=np.uint16)
+    real = np.expand_dims(real, axis=-1)
     real = np.transpose(real, (0, 3, 1, 2))
     fake = np.transpose(fake, (0, 3, 1, 2))
     real = np.repeat(real, 3, axis=1)
     fake = np.repeat(fake, 3, axis=1)
     real_images = np.concatenate((real_images, real), axis=0)
     fake_images = np.concatenate((fake_images, fake), axis=0)
-
-    
 
 def save_imgs_for_fid():
     global real_images
@@ -106,6 +126,10 @@ def save_imgs_for_fid():
     for i in range(len(real_images)):
         real = np.array(np.transpose(real_images[i], (1, 2, 0))/65535*255, dtype=np.int8)
         fake = np.array(np.transpose(fake_images[i], (1, 2, 0))/65535*255, dtype=np.int8)
+        print(real.shape)
+        print(np.max(real))
+        print(fake.shape)
+        print(np.max(fake))
         cv2.imwrite("tmp_fid_dir/real/real"+str(file_idx)+".png", real)
         cv2.imwrite("tmp_fid_dir/fake/fake"+str(file_idx)+".png", fake)
         file_idx += 1
@@ -114,6 +138,21 @@ def save_imgs_for_fid():
 
     real_images = np.empty([0, 3, 256, 256])
     fake_images = np.empty([0, 3, 256, 256])
+
+def fill_validation_directories(n):
+    while n > 0:
+        X_realA, X_realB, _ = generate_real_samples("/home/nick/Projects/SimpleData/", 4, 30, 901, 1050)
+        X_fakeB, _ = generate_fake_samples(g_model, X_realA, 30)
+        for i in range(len(X_realA)):
+            real = np.array(X_realB[i] * 127.5 + 255, dtype=np.uint8)
+            fake = np.squeeze(np.array(X_fakeB[i] * 127.5 + 255, dtype=np.uint8))
+            real = np.expand_dims(real, axis=-1)
+            fake = np.expand_dims(fake, axis=-1)
+            real = np.repeat(real, 3, axis=-1)
+            fake = np.repeat(fake, 3, axis=-1)
+            cv2.imwrite("tmp_validation_data/real/real"+str(n-i)+".png", real)
+            cv2.imwrite("tmp_validation_data/fake/fake"+str(n-i)+".png", fake)
+        n = n - 4
 
 def establish_initial_real_images_FID():
     cntr = 0
@@ -134,7 +173,7 @@ def calculate_fid():
 
     real_images = np.empty([0, 3, 256, 256])
     fake_images = np.empty([0, 3, 256, 256])
-    return compute_fid("tmp_fid_dir/real/", "tmp_fid_dir/fake/", mode="clean")
+    return compute_fid("tmp_fid_dir/real/", "tmp_fid_dir/fake/", dataset_res=256, mode="clean")
 
 # clip model weights to a given hypercube
 class ClipConstraint:
@@ -302,13 +341,6 @@ def define_generator(image_shape=(256, 256, 3)):
     g = BatchNormalization()(g, training=True)
     # conditionally add dropout
     d1 = LeakyReLU(alpha=0.2)(g)
-    g = Conv2D(
-        512, (4, 4), strides=(1, 1), padding="same", kernel_initializer=init
-    )(d1)
-    # add batch normalization
-    g = BatchNormalization()(g, training=True)
-    # conditionally add dropout
-    d1 = LeakyReLU(alpha=0.2)(g)
     d2 = decoder_block(d1, e6, 512)
     g = Conv2D(
         512, (4, 4), strides=(1, 1), padding="same", kernel_initializer=init
@@ -375,13 +407,13 @@ def define_gan(g_model, d_model, image_shape):
 
 
 
-def generate_real_samples(path, n_samples, patch_shape, rangeBeg=0, rangeEnd=950):
+def generate_real_samples(path, n_samples, patch_shape, rangeBeg=0, rangeEnd=900):
     files = listdir(path)
 
     
     input_files = [f for f in files if "Input" in f]
     input_files = input_files[rangeBeg:rangeEnd]
-    rand = randint(1, math.floor(len(input_files)/2)-n_samples)-1
+    rand = randint(1, len(input_files)-n_samples)-1
     input_files = input_files[rand:rand+n_samples]
     output_files = [f.replace("Input", "Output") for f in input_files]
 
@@ -413,87 +445,9 @@ def generate_real_samples(path, n_samples, patch_shape, rangeBeg=0, rangeEnd=950
         pixels_in = image.img_to_array(pixels_in, dtype=np.uint16)
         pixels_out = image.img_to_array(pixels_out, dtype=np.uint16)
 
-        slice_type = randint(0, 15)
-        start1 = 0
-        end1 = 0
-        start2 = 0
-        end2 = 0
+        pixels_in = cv2.resize(pixels_in, (256, 256), interpolation=cv2.INTER_LANCZOS4)
+        pixels_out = cv2.resize(pixels_out, (256, 256), interpolation=cv2.INTER_LANCZOS4)
 
-        if slice_type == 0:
-            end1 = 256
-            end2 = 256
-        elif slice_type == 1:
-            start1 = 256
-            end1 = 512
-            end2 = 256
-        elif slice_type == 2:
-            start1 = 512
-            end1 = 768
-            end2 = 256
-        elif slice_type == 3:
-            start1 = 768
-            end1 = 1024
-            end2 = 256
-        elif slice_type == 4:
-            end1 = 256
-            start2 = 256
-            end2 = 512
-        elif slice_type == 5:
-            start1 = 256
-            end1 = 512
-            start2 = 256
-            end2 = 512
-        elif slice_type == 6:
-            start1 = 512
-            end1 = 768
-            start2 = 256
-            end2 = 512
-        elif slice_type == 7:
-            start1 = 768
-            end1 = 1024
-            start2 = 256
-            end2 = 512
-        elif slice_type == 8:
-            end1 = 256
-            start2 = 512
-            end2 = 768
-        elif slice_type == 9:
-            start1 = 256
-            end1 = 512
-            start2 = 512
-            end2 = 768
-        elif slice_type == 10:
-            start1 = 512
-            end1 = 768
-            start2 = 512
-            end2 = 768
-        elif slice_type == 11:
-            start1 = 768
-            end1 = 1024
-            start2 = 512
-            end2 = 768
-        elif slice_type == 12:
-            end1 = 256
-            start2 = 768
-            end2 = 1024
-        elif slice_type == 13:
-            start1 = 256
-            end1 = 512
-            start2 = 768
-            end2 = 1024
-        elif slice_type == 14:
-            start1 = 512
-            end1 = 768
-            start2 = 768
-            end2 = 1024
-        elif slice_type == 15:
-            start1 = 768
-            end1 = 1024
-            start2 = 768
-            end2 = 1024
-
-        pixels_in = pixels_in[start1:end1, start2:end2]
-        pixels_out = pixels_out[start1:end1, start2:end2]
 
         rot_number = randint(0, 3)
         pixels_in = np.rot90(pixels_in, rot_number)
@@ -522,15 +476,49 @@ def generate_fake_samples(g_model, samples, patch_shape):
 def summarize_performance(step, g_model, n_samples=3):
     # select a sample of input images
     X_realA, X_realB,  y_real= generate_real_samples(dataPath, n_samples, 1)
+    X_realA = np.expand_dims(X_realA, axis=-1)
+    X_realB = np.expand_dims(X_realB, axis=-1)
     # generate a batch of fake samples
     X_fakeB, _ = generate_fake_samples(g_model, X_realA, 1)
     # scale all pixels from [-1,1] to [0,1]
     X_realA = (X_realA + 1) / 2.0
     X_realB = (X_realB + 1) / 2.0
     X_fakeB = (X_fakeB + 1) / 2.0
+    x = np.arange(0, X_realA.shape[2])
+    y = np.arange(0, X_realA.shape[1])
+    X, Y = np.meshgrid(x, y)
     pyplot.cla()
     pyplot.axis("off")
-    # plot real source images
+    fig = pyplot.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    ax.grid(False)
+    ax.axis("off")
+    ax.view_init(45, 215)
+    ax.plot_surface(X, Y, X_realA[0, :, :, 0], cmap='inferno', alpha=0.8, linewidth=0, antialiased=False, rcount=200, ccount=200)
+    fig.savefig("current_inp_plot.png")
+
+    pyplot.cla()
+    fig = pyplot.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    ax.grid(False)
+    ax.axis("off")
+    ax.view_init(45, 215)
+    ax.plot_surface(X, Y, X_fakeB[0, :, :, 0], cmap='inferno', alpha=0.8, linewidth=0, antialiased=False, rcount=200, ccount=200)
+    fig.savefig("current_fake_plot.png")
+
+    pyplot.cla()
+    fig = pyplot.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    ax.grid(False)
+    ax.axis("off")
+    ax.view_init(45, 215)
+    ax.plot_surface(X, Y, X_realB[0, :, :, 0], cmap='inferno', alpha=0.8, linewidth=0, antialiased=False, rcount=200, ccount=200)
+    fig.savefig("current_real_plot.png")
+
+
+    pyplot.cla()
+    pyplot.axis("off")
+ #   plot real source images
     for i in range(n_samples):
         pyplot.subplot(3, n_samples, 1 + i)
         pyplot.axis("off")
@@ -545,7 +533,7 @@ def summarize_performance(step, g_model, n_samples=3):
         pyplot.subplot(3, n_samples, 1 + n_samples * 2 + i)
         pyplot.axis("off")
         pyplot.imshow(X_realB[i, :, :, 0], cmap="gray")
-    # save plot to file
+
     filename1 = "plot_%06d.png" % (step + 1)
     pyplot.savefig(filename1)
     pyplot.savefig("current_plot.png")
@@ -554,6 +542,42 @@ def summarize_performance(step, g_model, n_samples=3):
     filename2 = "model_%06d.h5" % (step + 1)
     g_model.save(filename2)
     print(">Saved: %s and %s" % (filename1, filename2))
+
+def lpips_eval():
+    files = listdir("tmp_validation_data/real/")
+    sum_lpip = 0
+    pix_in = np.empty([0, 3, 256, 256])
+    pix_out = np.empty([0, 3, 256, 256])
+    batch = 64
+    cnt = 1
+    comps = 0
+    for real in files:
+        fake = 'tmp_validation_data/fake/' + real.replace('real', 'fake')
+        pixels_in = imageio.imread('tmp_validation_data/real/'+real)
+        pixels_out = imageio.imread(fake)
+        
+        pixels_in = image.img_to_array(pixels_in)
+        pixels_out = image.img_to_array(pixels_out)
+
+        pixels_in = np.expand_dims(pixels_in, axis=0)
+        pixels_out = np.expand_dims(pixels_out, axis=0)
+        pixels_in = np.transpose(pixels_in, (0, 3, 1, 2))
+        pixels_out = np.transpose(pixels_out, (0, 3, 1, 2))
+        pix_in = np.append(pix_in, pixels_in, axis=0)
+        pix_out = np.append(pix_out, pixels_out, axis=0)
+
+        if cnt % batch == 0:
+            pix_in = torch.tensor(pix_in).float()
+            pix_out = torch.tensor(pix_out).float()
+            res = lpips.forward(pix_in, pix_out)
+            sum_lpip = sum_lpip + torch.mean(res).item()
+            pix_in = np.empty([0, 3, 256, 256])
+            pix_out = np.empty([0, 3, 256, 256])
+            comps += 1
+        cnt += 1
+    if comps == 0:
+        return 0
+    return sum_lpip/comps
 
 
 # train pix2pix models
@@ -564,6 +588,8 @@ def train(d_model, g_model, gan_model, n_epochs=200, n_batch=4, n_critic=1):
     global dL1_ls
     global dL2_ls
     global gen_loss
+    global lpips_scores
+    global lpips_iterations
     areThere2048Images = False
     # determine the output square shape of the discriminator
     n_patch = d_model.output_shape[1]
@@ -592,22 +618,22 @@ def train(d_model, g_model, gan_model, n_epochs=200, n_batch=4, n_critic=1):
             # update discriminator for real samples
             sum_dloss1 += d_model.train_on_batch([X_realA, X_realB], y_real)
             # update discriminator for generated samples
-            sum_dloss2 += d_model.train_on_batch([X_realA, X_fakeB], y_fake)
+            sum_dloss2 += d_model.train_on_batch([X_realA, np.squeeze(X_fakeB)], y_fake)
         # update the generator
         g_loss, be_l, mse_l = gan_model.train_on_batch(X_realA, [y_real, X_realB])
         # summarize performance
         print(">%d, d1[%.3f] d2[%.3f] g[%.3f]" % (i + 1, sum_dloss1/n_critic, sum_dloss2/n_critic, g_loss))
         # summarize model performance
-        cache_img_for_fid(X_realB, X_fakeB)
+        #cache_img_for_fid(X_realB, X_fakeB)
         if (i + 1) % 100 == 0:
             dL1_ls.append(sum_dloss1/n_critic)
             dL2_ls.append(sum_dloss2/n_critic)
             gen_loss.append(be_l)
             iterations_loss.append(i + 1)
             graph_mse_be_loss()
-        if (i + 1) % 200 == 0:
-            save_imgs_for_fid()
-        if (i + 1) % (bat_per_epo) == 0:
+        #if (i + 1) % 1 == 0:
+            #save_imgs_for_fid()
+        if False:
             print('----------------------')
             fid_score = calculate_fid()
             print('FID: ' + str(fid_score))
@@ -615,6 +641,11 @@ def train(d_model, g_model, gan_model, n_epochs=200, n_batch=4, n_critic=1):
             fid_scores.append(fid_score)
             iterations.append(i+1)
             saveFIDScoresInGraph()
+        if (i + 1) % 500 == 0:
+            fill_validation_directories(200)
+            lpips_scores.append(lpips_eval())
+            lpips_iterations.append(i+1)
+            saveLPIPScores()
             summarize_performance(i, g_model)
             #reduce_lr.on_epoch_end(i+1/bat_per_epo, logs={'val_loss': fid_score})
         #if (i + 1) % 5000 == 0:
