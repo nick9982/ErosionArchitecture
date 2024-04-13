@@ -1,4 +1,5 @@
 from numpy import int16, load
+import time
 from tensorflow.keras.preprocessing import image
 import imageio
 import cv2
@@ -33,23 +34,23 @@ from keras import backend
 from matplotlib.animation import FuncAnimation
 import subprocess
 import re
-from cleanfida.fid import compute_fid
 import torch
 from lpips.lpips import LPIPS
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
 
-# from tensorflow import autograd
-# import neptune
+key_path = '/home/dave01/erosionmodel-g-api-key.json'
+
+SCOPES = ['https://www.googleapis.com/auth/drive']
+
+credentials = service_account.Credentials.from_service_account_file(key_path, scopes=SCOPES)
+
+drive_service = build('drive', 'v3', credentials=credentials)
 
 lpips = LPIPS(net='alex')
 
 fid_scores = []
-lpips_scores = []
-iterations = []
-iterations_loss = []
-dL1_ls = []
-dL2_ls = []
-gen_loss = []
-lpips_iterations = []
 real_images = np.empty([0, 3, 256, 256])
 fake_images = np.empty([0, 3, 256, 256])
 def saveFIDScoresInGraph():
@@ -67,10 +68,27 @@ def saveFIDScoresInGraph():
 
     pyplot.savefig('fid_scores.png')
 
+def save3ImagesToDrive():
+    X_realA, X_realB, _ = generate_real_samples("/home/dave01/SimpleData/", 3, 30, 901, 1050)
+    X_fakeB, _ = generate_fake_samples(g_model, X_realA, 30)
+    for i in range(len(X_realA)):
+        real = np.array(X_realB[i] * 32767.5 + 32767.5, dtype=np.uint16)
+        fake = np.array(X_fakeB[i] * 32767.5 + 32767.5, dtype=np.uint16)
+        inp = np.array(X_realA[i] * 32767.5 + 32767.5, dtype=np.uint16)
+        real = np.expand_dims(real, axis=-1)
+        inp = np.expand_dims(inp, axis=-1)
+        cv2.imwrite("real_out_"+str(i)+".png", real)
+        cv2.imwrite("fake_out_"+str(i)+".png", fake)
+        cv2.imwrite("inp_"+str(i)+".png", inp)
+        save_file_to_gdrive('real_out_'+str(i)+'.png', '/home/dave01/Project/ErosionArchitecture/models/real_out_'+str(i)+'.png')
+        save_file_to_gdrive('fake_out_'+str(i)+'.png', '/home/dave01/Project/ErosionArchitecture/models/fake_out_'+str(i)+'.png')
+        save_file_to_gdrive('inp_'+str(i)+'.png', '/home/dave01/Project/ErosionArchitecture/models/inp_'+str(i)+'.png')
+
 
 def saveLPIPScores():
-    global lpips_scores
-    global lpips_iterations
+
+    lpips_scores = read_file_into_list('lpips.txt')
+    lpips_iterations = read_file_into_list('lpips_iterations.txt')
     pyplot.cla()
     pyplot.axis("on")
 
@@ -82,12 +100,30 @@ def saveLPIPScores():
     pyplot.title('lpips')
 
     pyplot.savefig('lpips.png')
+    save_file_to_gdrive('lpips.png', '/home/dave01/Project/ErosionArchitecture/models/lpips.png')
 
-def graph_mse_be_loss():
-    global dL1_ls
-    global dL2_ls
-    global gen_loss
-    global iterations_loss
+def deleteAllFilesWithName(fname):
+    response = drive_service.files().list(
+            q="name='"+fname+"' and '1u9k17k1xTvZJOjS4-oIvIRB5ozuho8v0' in parents",
+            fields='files(id, name)'
+            ).execute()
+    for file in response.get('files', []):
+        file_id = file.get('id')
+        drive_service.files().delete(fileId=file_id).execute()
+
+def save_file_to_gdrive(fname, fpath):
+    deleteAllFilesWithName(fname)
+    time.sleep(0.4)
+    file_metadata = {'name': fname, "parents": ['1u9k17k1xTvZJOjS4-oIvIRB5ozuho8v0']}
+    media = MediaFileUpload(fpath, mimetype='image/png', resumable=True)
+    f = drive_service.files().create(body=file_metadata, media_body=media, fields='id').execute()
+
+def graphGANLoss():
+    dL1_ls = read_file_into_list('dL1_ls.txt')
+    dL2_ls = read_file_into_list('dL2_ls.txt')
+    gen_loss = read_file_into_list('gen_ls.txt')
+    iterations_loss = read_file_into_list('loss_iterations.txt')
+
     pyplot.cla() 
     pyplot.axis("on")
 
@@ -101,47 +137,49 @@ def graph_mse_be_loss():
     pyplot.title('Loss')
 
     pyplot.savefig('loss.png')
+    pyplot.close()
+    save_file_to_gdrive('loss.png', '/home/dave01/Project/ErosionArchitecture/models/loss.png')
 
 def wasserstein_loss(y_true, y_pred):
     return backend.mean(y_true * y_pred)
 
 file_idx = 0
-def cache_img_for_fid(real_features, generated_features):
-    global real_images
-    global fake_images
-    real = np.array(real_features* 32767.5 + 32767.5, dtype=np.uint16)
-    fake = np.array(generated_features* 32767.5 + 32767.5, dtype=np.uint16)
-    real = np.expand_dims(real, axis=-1)
-    real = np.transpose(real, (0, 3, 1, 2))
-    fake = np.transpose(fake, (0, 3, 1, 2))
-    real = np.repeat(real, 3, axis=1)
-    fake = np.repeat(fake, 3, axis=1)
-    real_images = np.concatenate((real_images, real), axis=0)
-    fake_images = np.concatenate((fake_images, fake), axis=0)
+#def cache_img_for_fid(real_features, generated_features):
+#    global real_images
+#    global fake_images
+#    real = np.array(real_features* 32767.5 + 32767.5, dtype=np.uint16)
+#    fake = np.array(generated_features* 32767.5 + 32767.5, dtype=np.uint16)
+#    real = np.expand_dims(real, axis=-1)
+#    real = np.transpose(real, (0, 3, 1, 2))
+#    fake = np.transpose(fake, (0, 3, 1, 2))
+#    real = np.repeat(real, 3, axis=1)
+#    fake = np.repeat(fake, 3, axis=1)
+#    real_images = np.concatenate((real_images, real), axis=0)
+#    fake_images = np.concatenate((fake_images, fake), axis=0)
 
-def save_imgs_for_fid():
-    global real_images
-    global fake_images
-    global file_idx
-    for i in range(len(real_images)):
-        real = np.array(np.transpose(real_images[i], (1, 2, 0))/65535*255, dtype=np.int8)
-        fake = np.array(np.transpose(fake_images[i], (1, 2, 0))/65535*255, dtype=np.int8)
-        print(real.shape)
-        print(np.max(real))
-        print(fake.shape)
-        print(np.max(fake))
-        cv2.imwrite("tmp_fid_dir/real/real"+str(file_idx)+".png", real)
-        cv2.imwrite("tmp_fid_dir/fake/fake"+str(file_idx)+".png", fake)
-        file_idx += 1
-        if file_idx == 3000:
-            file_idx = 0
+#def save_imgs_for_fid():
+#    global real_images
+#    global fake_images
+#    global file_idx
+#    for i in range(len(real_images)):
+#        real = np.array(np.transpose(real_images[i], (1, 2, 0))/65535*255, dtype=np.int8)
+#        fake = np.array(np.transpose(fake_images[i], (1, 2, 0))/65535*255, dtype=np.int8)
+#        print(real.shape)
+#        print(np.max(real))
+#        print(fake.shape)
+#        print(np.max(fake))
+#        cv2.imwrite("tmp_fid_dir/real/real"+str(file_idx)+".png", real)
+#        cv2.imwrite("tmp_fid_dir/fake/fake"+str(file_idx)+".png", fake)
+#        file_idx += 1
+#        if file_idx == 3000:
+#            file_idx = 0
 
-    real_images = np.empty([0, 3, 256, 256])
-    fake_images = np.empty([0, 3, 256, 256])
+#    real_images = np.empty([0, 3, 256, 256])
+#    fake_images = np.empty([0, 3, 256, 256])
 
 def fill_validation_directories(n):
     while n > 0:
-        X_realA, X_realB, _ = generate_real_samples("/home/nick/Projects/SimpleData/", 4, 30, 901, 1050)
+        X_realA, X_realB, _ = generate_real_samples("/home/dave01/SimpleData/", 4, 30, 901, 1050)
         X_fakeB, _ = generate_fake_samples(g_model, X_realA, 30)
         for i in range(len(X_realA)):
             real = np.array(X_realB[i] * 127.5 + 255, dtype=np.uint8)
@@ -154,26 +192,26 @@ def fill_validation_directories(n):
             cv2.imwrite("tmp_validation_data/fake/fake"+str(n-i)+".png", fake)
         n = n - 4
 
-def establish_initial_real_images_FID():
-    cntr = 0
-    files = listdir("tmp_fid_dir/real/")
-    if len(files) > 2999: return;
-    for i in range(100):
-        _, X, _ = generate_real_samples("/home/nick/Projects/SimpleData/", 30, 30)
-        for j in  range(len(X)):
-            real = np.array(X[j]*255+127.5, dtype=np.int8)
-            cv2.imwrite("tmp_fid_dir/real/real"+str(cntr)+".png", real)
-            cntr += 1
+# def establish_initial_real_images_FID():
+#    cntr = 0
+#    files = listdir("tmp_fid_dir/real/")
+#    if len(files) > 2999: return;
+#    for i in range(100):
+#        _, X, _ = generate_real_samples("/home/nick/Projects/SimpleData/", 30, 30)
+#        for j in  range(len(X)):
+#            real = np.array(X[j]*255+127.5, dtype=np.int8)
+#            cv2.imwrite("tmp_fid_dir/real/real"+str(cntr)+".png", real)
+#            cntr += 1
 
 
-def calculate_fid():
-    global file_idx
-    global real_images
-    global fake_images
+#def calculate_fid():
+#    global file_idx
+#    global real_images
+#    global fake_images
 
-    real_images = np.empty([0, 3, 256, 256])
-    fake_images = np.empty([0, 3, 256, 256])
-    return compute_fid("tmp_fid_dir/real/", "tmp_fid_dir/fake/", dataset_res=256, mode="clean")
+#    real_images = np.empty([0, 3, 256, 256])
+#    fake_images = np.empty([0, 3, 256, 256])
+#    return compute_fid("tmp_fid_dir/real/", "tmp_fid_dir/fake/", dataset_res=256, mode="clean")
 
 # clip model weights to a given hypercube
 class ClipConstraint:
@@ -188,7 +226,51 @@ class ClipConstraint:
     def get_config(self):
         return {'clip_value': self.clip_value}
  
-const = ClipConstraint(0.01)
+def storeMSEAndPSNR(mse):
+    mse_file = open('mse.txt', 'a')
+    psnr_file = open('psnr.txt', 'a')
+    mse_file.write(' ' + str(mse))
+    psnr_file.write(' ' + str(20 * math.log(65535, 10) - 10 * math.log(mse, 10)))
+
+def storeData(filename, data):
+    f = open(filename, 'a')
+    f.write(' ' + str(data))
+
+def read_file_into_list(filename):
+    lst = []
+    with open(filename, 'r') as file:
+        file_content = file.read()
+        lst = [x for x in file_content.split(' ') if x != '']
+        lst = np.array(lst, dtype=np.float32)
+    return lst
+
+def plotMSEAndPSNR():
+    iterations = read_file_into_list('loss_iterations.txt')
+    mse = read_file_into_list('mse.txt')
+    pyplot.cla()
+    pyplot.figure()
+    pyplot.plot(iterations, mse, marker='o', color='b')
+    pyplot.xlabel('Iteration')
+    pyplot.ylabel('mse')
+    pyplot.title('MSE Scores')
+
+    pyplot.savefig('mse.png')
+    save_file_to_gdrive('mse.png', '/home/dave01/Project/ErosionArchitecture/models/mse.png')
+
+    pyplot.close()
+    psnr = read_file_into_list('psnr.txt')
+    pyplot.cla()
+    pyplot.figure()
+    pyplot.plot(iterations, psnr, marker='o', color ='b')
+    pyplot.xlabel('Iteration')
+    pyplot.ylabel('psnr')
+    pyplot.title('PSNR Scores')
+
+    pyplot.savefig('psnr.png')
+    save_file_to_gdrive('psnr.png', '/home/dave01/Project/ErosionArchitecture/models/psnr.png')
+
+    pyplot.close()
+
 # define the discriminator model
 def define_discriminator(gen_out_shape, tar_image_shape):
     # weight initialization
@@ -496,6 +578,7 @@ def summarize_performance(step, g_model, n_samples=3):
     ax.view_init(45, 215)
     ax.plot_surface(X, Y, X_realA[0, :, :, 0], cmap='inferno', alpha=0.8, linewidth=0, antialiased=False, rcount=200, ccount=200)
     fig.savefig("current_inp_plot.png")
+    save_file_to_gdrive('current_inp_plot.png', '/home/dave01/Project/ErosionArchitecture/models/current_inp_plot.png')
 
     pyplot.cla()
     fig = pyplot.figure()
@@ -505,6 +588,7 @@ def summarize_performance(step, g_model, n_samples=3):
     ax.view_init(45, 215)
     ax.plot_surface(X, Y, X_fakeB[0, :, :, 0], cmap='inferno', alpha=0.8, linewidth=0, antialiased=False, rcount=200, ccount=200)
     fig.savefig("current_fake_plot.png")
+    save_file_to_gdrive('current_fake_plot.png', '/home/dave01/Project/ErosionArchitecture/models/current_fake_plot.png')
 
     pyplot.cla()
     fig = pyplot.figure()
@@ -514,6 +598,7 @@ def summarize_performance(step, g_model, n_samples=3):
     ax.view_init(45, 215)
     ax.plot_surface(X, Y, X_realB[0, :, :, 0], cmap='inferno', alpha=0.8, linewidth=0, antialiased=False, rcount=200, ccount=200)
     fig.savefig("current_real_plot.png")
+    save_file_to_gdrive('current_real_plot.png', '/home/dave01/Project/ErosionArchitecture/models/current_real_plot.png')
 
 
     pyplot.cla()
@@ -537,6 +622,8 @@ def summarize_performance(step, g_model, n_samples=3):
     filename1 = "plot_%06d.png" % (step + 1)
     pyplot.savefig(filename1)
     pyplot.savefig("current_plot.png")
+    save_file_to_gdrive('current_plot.png', '/home/dave01/Project/ErosionArchitecture/models/current_plot.png')
+
     pyplot.close()
     # save the generator model
     filename2 = "model_%06d.h5" % (step + 1)
@@ -582,14 +669,7 @@ def lpips_eval():
 
 # train pix2pix models
 def train(d_model, g_model, gan_model, n_epochs=200, n_batch=4, n_critic=1):
-    global iterations
     global fid_scores
-    global iterations_loss
-    global dL1_ls
-    global dL2_ls
-    global gen_loss
-    global lpips_scores
-    global lpips_iterations
     areThere2048Images = False
     # determine the output square shape of the discriminator
     n_patch = d_model.output_shape[1]
@@ -625,43 +705,55 @@ def train(d_model, g_model, gan_model, n_epochs=200, n_batch=4, n_critic=1):
         print(">%d, d1[%.3f] d2[%.3f] g[%.3f]" % (i + 1, sum_dloss1/n_critic, sum_dloss2/n_critic, g_loss))
         # summarize model performance
         #cache_img_for_fid(X_realB, X_fakeB)
-        if (i + 1) % 100 == 0:
-            dL1_ls.append(sum_dloss1/n_critic)
-            dL2_ls.append(sum_dloss2/n_critic)
-            gen_loss.append(be_l)
-            iterations_loss.append(i + 1)
-            graph_mse_be_loss()
-        #if (i + 1) % 1 == 0:
-            #save_imgs_for_fid()
-        if False:
-            print('----------------------')
-            fid_score = calculate_fid()
-            print('FID: ' + str(fid_score))
-            print('----------------------')
-            fid_scores.append(fid_score)
-            iterations.append(i+1)
-            saveFIDScoresInGraph()
+        if (i + 1) % 200 == 0:
+            storeData('mse.txt', mse_l)
+            storeData('psnr.txt', 20 * math.log(65535, 10) - 10 * math.log(mse_l, 10))
+            storeData('dL1_ls.txt', sum_dloss1/n_critic)
+            storeData('dL2_ls.txt', sum_dloss2/n_critic)
+            storeData('gen_ls.txt', g_loss)
+            storeData('loss_iterations.txt', i+1)
+            graphGANLoss()
+            plotMSEAndPSNR()
         if (i + 1) % 500 == 0:
+            save3ImagesToDrive()
             fill_validation_directories(200)
-            lpips_scores.append(lpips_eval())
-            lpips_iterations.append(i+1)
+            storeData('lpips.txt', lpips_eval())
+            storeData('lpips_iterations.txt', i+1)
             saveLPIPScores()
+        if (i + 1) % 1000 == 0:
             summarize_performance(i, g_model)
             #reduce_lr.on_epoch_end(i+1/bat_per_epo, logs={'val_loss': fid_score})
         #if (i + 1) % 5000 == 0:
          #   x = 0
 
 
-physical_devices = tf.config.experimental.list_physical_devices("GPU")
+#physical_devices = tf.config.experimental.list_physical_devices("GPU")
 
-if len(physical_devices) > 0:
-    tf.config.experimental.set_memory_growth(physical_devices[0], True)
-dataPath = "/home/nick/Projects/SimpleData/"
+#if len(physical_devices) > 0:
+#    tf.config.experimental.set_memory_growth(physical_devices[0], True)
+
+import subprocess
+cwd = os.getcwd()
+command = f'rm {cwd}/*.txt'
+subprocess.run(command, shell=True)
+
+gpus = tf.config.list_physical_devices('GPU')
+if gpus:
+    try:
+        # Currently, memory growth needs to be the same across GPUs
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+        logical_gpus = tf.config.list_logical_devices('GPU')
+        print(len(gpus), "Physical GPUs,", len(logical_gpus), "Logical GPUs")
+    except RuntimeError as e:
+        # Memory growth must be set before GPUs have been initialized
+        print(e)
+
+dataPath = "/home/dave01/SimpleData/"
 # load image data
 d_model = define_discriminator((256, 256, 1), (256, 256, 1))
 g_model = define_generator((256, 256, 1))
 # define the composite model
 gan_model = define_gan(g_model, d_model, (256, 256, 1))
 # train model
-establish_initial_real_images_FID()
 train(d_model, g_model, gan_model)
