@@ -39,6 +39,7 @@ from lpips.lpips import LPIPS
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
+from googleapiclient.errors import HttpError
 
 key_path = '/home/dave01/erosionmodel-g-api-key.json'
 
@@ -50,23 +51,8 @@ drive_service = build('drive', 'v3', credentials=credentials)
 
 lpips = LPIPS(net='alex')
 
-fid_scores = []
 real_images = np.empty([0, 3, 256, 256])
 fake_images = np.empty([0, 3, 256, 256])
-def saveFIDScoresInGraph():
-    global fid_scores
-    global iterations
-    pyplot.cla()  # Clear the current plot
-    pyplot.axis("on")
-
-    # Plot FID scores against iteration numbers
-    pyplot.figure()
-    pyplot.plot(iterations, fid_scores, marker='o', color='b')
-    pyplot.xlabel('Iteration')
-    pyplot.ylabel('FID')
-    pyplot.title('FID Scores')
-
-    pyplot.savefig('fid_scores.png')
 
 def save3ImagesToDrive():
     X_realA, X_realB, _ = generate_real_samples("/home/dave01/ComplexData/", 3, 30, 2200, 2450)
@@ -103,20 +89,39 @@ def saveLPIPScores():
     save_file_to_gdrive('lpips.png', '/home/dave01/Project/ErosionArchitecture/models/lpips.png')
 
 def deleteAllFilesWithName(fname):
-    response = drive_service.files().list(
-            q="name='"+fname+"' and '1u9k17k1xTvZJOjS4-oIvIRB5ozuho8v0' in parents",
-            fields='files(id, name)'
-            ).execute()
-    for file in response.get('files', []):
-        file_id = file.get('id')
-        drive_service.files().delete(fileId=file_id).execute()
+    hasRequestBeenSatisfied = False
+    while not hasRequestBeenSatisfied:
+        try:
+            response = drive_service.files().list(
+                    q="name='"+fname+"' and '1u9k17k1xTvZJOjS4-oIvIRB5ozuho8v0' in parents",
+                    fields='files(id, name)'
+                    ).execute()
+            hasRequestBeenSatisfied = True
+            for file in response.get('files', []):
+                file_id = file.get('id')
+                drive_service.files().delete(fileId=file_id).execute()
+        except HttpError:
+            print("google connection error")
+            print("wait 1 minute to request again")
+            time.sleep(60)
+
+import requests
 
 def save_file_to_gdrive(fname, fpath):
-    deleteAllFilesWithName(fname)
+
+    #deleteAllFilesWithName(fname)
     time.sleep(0.4)
-    file_metadata = {'name': fname, "parents": ['1u9k17k1xTvZJOjS4-oIvIRB5ozuho8v0']}
-    media = MediaFileUpload(fpath, mimetype='image/png', resumable=True)
-    f = drive_service.files().create(body=file_metadata, media_body=media, fields='id').execute()
+    hasRequestBeenSatisfied = False
+    #while not hasRequestBeenSatisfied:
+    #    try:
+    #        file_metadata = {'name': fname, "parents": ['1u9k17k1xTvZJOjS4-oIvIRB5ozuho8v0']}
+    #        media = MediaFileUpload(fpath, mimetype='image/png', resumable=True)
+    #        f = drive_service.files().create(body=file_metadata, media_body=media, fields='id').execute()
+    #        hasRequestBeenSatisfied = True
+    #    except HttpError:
+    #        print("google connection error")
+    #        print("Wait 1 minute to request again")
+    #        time.sleep(60)
 
 def graphGANLoss():
     dL1_ls = read_file_into_list('dL1_ls.txt')
@@ -140,42 +145,7 @@ def graphGANLoss():
     pyplot.close()
     save_file_to_gdrive('loss.png', '/home/dave01/Project/ErosionArchitecture/models/loss.png')
 
-def wasserstein_loss(y_true, y_pred):
-    return backend.mean(y_true * y_pred)
-
 file_idx = 0
-#def cache_img_for_fid(real_features, generated_features):
-#    global real_images
-#    global fake_images
-#    real = np.array(real_features* 32767.5 + 32767.5, dtype=np.uint16)
-#    fake = np.array(generated_features* 32767.5 + 32767.5, dtype=np.uint16)
-#    real = np.expand_dims(real, axis=-1)
-#    real = np.transpose(real, (0, 3, 1, 2))
-#    fake = np.transpose(fake, (0, 3, 1, 2))
-#    real = np.repeat(real, 3, axis=1)
-#    fake = np.repeat(fake, 3, axis=1)
-#    real_images = np.concatenate((real_images, real), axis=0)
-#    fake_images = np.concatenate((fake_images, fake), axis=0)
-
-#def save_imgs_for_fid():
-#    global real_images
-#    global fake_images
-#    global file_idx
-#    for i in range(len(real_images)):
-#        real = np.array(np.transpose(real_images[i], (1, 2, 0))/65535*255, dtype=np.int8)
-#        fake = np.array(np.transpose(fake_images[i], (1, 2, 0))/65535*255, dtype=np.int8)
-#        print(real.shape)
-#        print(np.max(real))
-#        print(fake.shape)
-#        print(np.max(fake))
-#        cv2.imwrite("tmp_fid_dir/real/real"+str(file_idx)+".png", real)
-#        cv2.imwrite("tmp_fid_dir/fake/fake"+str(file_idx)+".png", fake)
-#        file_idx += 1
-#        if file_idx == 3000:
-#            file_idx = 0
-
-#    real_images = np.empty([0, 3, 256, 256])
-#    fake_images = np.empty([0, 3, 256, 256])
 
 def fill_validation_directories(n):
     while n > 0:
@@ -192,40 +162,6 @@ def fill_validation_directories(n):
             cv2.imwrite("tmp_validation_data/fake/fake"+str(n-i)+".png", fake)
         n = n - 4
 
-# def establish_initial_real_images_FID():
-#    cntr = 0
-#    files = listdir("tmp_fid_dir/real/")
-#    if len(files) > 2999: return;
-#    for i in range(100):
-#        _, X, _ = generate_real_samples("/home/nick/Projects/SimpleData/", 30, 30)
-#        for j in  range(len(X)):
-#            real = np.array(X[j]*255+127.5, dtype=np.int8)
-#            cv2.imwrite("tmp_fid_dir/real/real"+str(cntr)+".png", real)
-#            cntr += 1
-
-
-#def calculate_fid():
-#    global file_idx
-#    global real_images
-#    global fake_images
-
-#    real_images = np.empty([0, 3, 256, 256])
-#    fake_images = np.empty([0, 3, 256, 256])
-#    return compute_fid("tmp_fid_dir/real/", "tmp_fid_dir/fake/", dataset_res=256, mode="clean")
-
-# clip model weights to a given hypercube
-class ClipConstraint:
-    # set clip value when initialized
-    def __init__(self, clip_value):
-        self.clip_value = clip_value
-
-    # clip model weights to hypercube
-    def __call__(self, weights):
-        return backend.clip(weights, -self.clip_value, self.clip_value)
-     # get the config
-    def get_config(self):
-        return {'clip_value': self.clip_value}
- 
 def storeMSEAndPSNR(mse):
     mse_file = open('mse.txt', 'a')
     psnr_file = open('psnr.txt', 'a')
@@ -318,7 +254,7 @@ def define_discriminator(gen_out_shape, tar_image_shape):
 
 
 # define an encoder block
-def define_encoder_block(layer_in, n_filters, batchnorm=True):
+def define_encoder_block(layer_in, n_filters, batchnorm=True, n_extra_layers=0):
     # weight initialization
     init = RandomNormal(stddev=0.02, seed=145)
     # add downsampling layer
@@ -330,11 +266,22 @@ def define_encoder_block(layer_in, n_filters, batchnorm=True):
         g = BatchNormalization()(g, training=True)
     # leaky relu activation
     g = LeakyReLU(alpha=0.2)(g)
+
+    for i in range(n_extra_layers):
+        g = Conv2D(
+            n_filters, (5, 5), strides=(1, 1), dilation_rate=(2, 2), padding="same", kernel_initializer=init
+        )(g)
+        # conditionally add batch normalization
+        if batchnorm:
+            g = BatchNormalization()(g, training=True)
+        # leaky relu activation
+        g = LeakyReLU(alpha=0.2)(g)
+        
     return g
 
 
 # define a decoder block
-def decoder_block(layer_in, skip_in, n_filters, dropout=False):
+def decoder_block(layer_in, skip_in, n_filters, dropout=False, n_extra_layers=0):
     # weight initialization
     init = RandomNormal(stddev=0.02, seed=1234)
     # add upsampling layer
@@ -348,7 +295,21 @@ def decoder_block(layer_in, skip_in, n_filters, dropout=False):
         g = Dropout(0.15)(g, training=True)
     # merge with skip connection
     g = LeakyReLU(alpha=0.2)(g)
+
     g = Concatenate()([g, skip_in])
+
+    for i in range(n_extra_layers):
+        g = Conv2D(
+            n_filters, (5, 5), strides=(1, 1), dilation_rate=(2, 2) , padding="same", kernel_initializer=init
+        )(g)
+        # add batch normalization
+        g = BatchNormalization()(g, training=True)
+        # conditionally add dropout
+        if dropout:
+            g = Dropout(0.15)(g, training=True)
+        # merge with skip connection
+        g = LeakyReLU(alpha=0.2)(g)
+
     return g
 
 
@@ -361,100 +322,22 @@ def define_generator(image_shape=(256, 256, 3)):
     # encoder model
     e1 = define_encoder_block(in_image, 64, batchnorm=False)
     e2 = define_encoder_block(e1, 128)
-    g = Conv2D(
-        128, (4, 4), strides=(1, 1), padding="same", kernel_initializer=init
-    )(e2)
-    # add batch normalization
-    g = BatchNormalization()(g, training=True)
-    # conditionally add dropout
-    e2 = LeakyReLU(alpha=0.2)(g)
-
-    e3 = define_encoder_block(e2, 256)
-    g = Conv2D(
-        256, (4, 4), strides=(1, 1), padding="same", kernel_initializer=init
-    )(e3)
-    # add batch normalization
-    g = BatchNormalization()(g, training=True)
-    # conditionally add dropout
-    e3 = LeakyReLU(alpha=0.2)(g)
-    e4 = define_encoder_block(e3, 512)
-    g = Conv2D(
-        512, (4, 4), strides=(1, 1), padding="same", kernel_initializer=init
-    )(e4)
-    # add batch normalization
-    g = BatchNormalization()(g, training=True)
-    # conditionally add dropout
-    e4 = LeakyReLU(alpha=0.2)(g)
-    e5 = define_encoder_block(e4, 512)
-    g = Conv2D(
-        512, (4, 4), strides=(1, 1), padding="same", kernel_initializer=init
-    )(e5)
-    # add batch normalization
-    g = BatchNormalization()(g, training=True)
-    # conditionally add dropout
-    e5 = LeakyReLU(alpha=0.2)(g)
-    e6 = define_encoder_block(e5, 512)
-    g = Conv2D(
-        512, (4, 4), strides=(1, 1), padding="same", kernel_initializer=init
-    )(e6)
-    # add batch normalization
-    g = BatchNormalization()(g, training=True)
-    # conditionally add dropout
-    e6 = LeakyReLU(alpha=0.2)(g)
-    g = Conv2D(
-        512, (4, 4), strides=(1, 1), padding="same", kernel_initializer=init
-    )(e6)
-    # add batch normalization
-    g = BatchNormalization()(g, training=True)
-    # conditionally add dropout
-    e6 = LeakyReLU(alpha=0.2)(g)
-    e7 = define_encoder_block(e6, 512)
+    e3 = define_encoder_block(e2, 256, n_extra_layers=1)
+    e4 = define_encoder_block(e3, 512, n_extra_layers=1)
+    e5 = define_encoder_block(e4, 512, n_extra_layers=1)
+    e6 = define_encoder_block(e5, 512, n_extra_layers=2)
+    e7 = define_encoder_block(e6, 512, n_extra_layers=2)
 
      # bottleneck, no batch norm and relu
     b = Conv2D(512, (4,4), strides=(2,2), padding='same', kernel_initializer=init)(e7)
     b = Activation('relu')(b)
 
     # decoder model
-    d1 = decoder_block(b, e7, 512)
-    g = Conv2D(
-        512, (4, 4), strides=(1, 1), padding="same", kernel_initializer=init
-    )(d1)
-    # add batch normalization
-    g = BatchNormalization()(g, training=True)
-    # conditionally add dropout
-    d1 = LeakyReLU(alpha=0.2)(g)
-    d2 = decoder_block(d1, e6, 512)
-    g = Conv2D(
-        512, (4, 4), strides=(1, 1), padding="same", kernel_initializer=init
-    )(d2)
-    # add batch normalization
-    g = BatchNormalization()(g, training=True)
-    # conditionally add dropout
-    d2 = LeakyReLU(alpha=0.2)(g)
-    d3 = decoder_block(d2, e5, 512)
-    g = Conv2D(
-        512, (4, 4), strides=(1, 1), padding="same", kernel_initializer=init
-    )(d3)
-    # add batch normalization
-    g = BatchNormalization()(g, training=True)
-    # conditionally add dropout
-    d3 = LeakyReLU(alpha=0.2)(g)
-    d4 = decoder_block(d3, e4, 512, dropout=False)
-    g = Conv2D(
-        512, (4, 4), strides=(1, 1), padding="same", kernel_initializer=init
-    )(d4)
-    # add batch normalization
-    g = BatchNormalization()(g, training=True)
-    # conditionally add dropout
-    d4 = LeakyReLU(alpha=0.2)(g)
-    d5 = decoder_block(d4, e3, 256, dropout=False)
-    g = Conv2D(
-        256, (4, 4), strides=(1, 1), padding="same", kernel_initializer=init
-    )(d5)
-    # add batch normalization
-    g = BatchNormalization()(g, training=True)
-    # conditionally add dropout
-    d5 = LeakyReLU(alpha=0.2)(g)
+    d1 = decoder_block(b, e7, 512, n_extra_layers=2)
+    d2 = decoder_block(d1, e6, 512, n_extra_layers=1)
+    d3 = decoder_block(d2, e5, 512, n_extra_layers=1)
+    d4 = decoder_block(d3, e4, 512, dropout=False, n_extra_layers=1)
+    d5 = decoder_block(d4, e3, 256, dropout=False, n_extra_layers=1)
     d6 = decoder_block(d5, e2, 128, dropout=False)
     d7 = decoder_block(d6, e1, 64, dropout=False)
     # output
@@ -693,9 +576,6 @@ def train(d_model, g_model, gan_model, n_epochs=200, n_batch=4, n_critic=1):
             if j != 0:
                 X_realA, X_realB, y_real = generate_real_samples(dataPath, n_batch, n_patch)
                 X_fakeB, y_fake = generate_fake_samples(g_model, X_realA, n_patch)
-            # print('xreal a shape: ' + str(X_realA.shape))
-            # generate a batch of fake samples
-            # update discriminator for real samples
             sum_dloss1 += d_model.train_on_batch([X_realA, X_realB], y_real)
             # update discriminator for generated samples
             sum_dloss2 += d_model.train_on_batch([X_realA, np.squeeze(X_fakeB)], y_fake)
