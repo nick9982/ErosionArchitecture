@@ -70,6 +70,7 @@ def train(d_model, g_model, gan_model, dataPath, n_epochs=200, n_batch=4, n_crit
 
 import subprocess
 import os
+# delete all the txt files. They store data from other episodes of training
 cwd = os.getcwd()
 command = f'rm {cwd}/*.txt'
 subprocess.run(command, shell=True)

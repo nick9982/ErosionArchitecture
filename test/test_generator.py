@@ -102,8 +102,3 @@ def ErosionOnFile(filename, loaded_model, outname):
 
     o = np.squeeze(o)
     cv2.imwrite(outname, o)
-
-# ErosionOnFile("hllogo.png", loaded_model, "logo.png")
-# ErosionOnFile("blurredhllogo.png", loaded_model, "logobl.png")
-# ErosionOnFile("test.png", loaded_model, "o.png")
-
