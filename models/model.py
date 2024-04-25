@@ -1,279 +1,161 @@
-import sys
-
-sys.path.append("data")
-sys.path.append("models")
+import time
 from keras.optimizers import Adam
 from keras.initializers import RandomNormal
 from keras.models import Model
-from keras.layers import Input
-from keras.layers import Conv2D
-from keras.layers import Conv2DTranspose
-from keras.layers import LeakyReLU
-from keras.layers import Activation
-from keras.layers import Concatenate
-from keras.layers import Dropout
-from keras.layers import BatchNormalization
-from keras.layers import LeakyReLU
-from matplotlib import pyplot
-from keras.layers import MaxPooling2D
-from keras.layers import Dropout, Activation
-from keras.models import Model
-from erosionData import ErosionData
-from matplotlib import pyplot
-import numpy as np
+from keras.layers import Input, Conv2D, MaxPool2D, Conv2DTranspose, LeakyReLU, Activation, Concatenate, BatchNormalization, LeakyReLU
 
-
-def define_discriminator(imageShape=(256, 256, 3)):
-    init = RandomNormal(stddev=0.02)
-
-    in_image = Input(shape=imageShape)
-
+# define the discriminator model
+def define_discriminator(gen_out_shape, tar_image_shape):
+    # weight initialization
+    init = RandomNormal(stddev=0.02, seed=int(time.time()))
+    # source image input
+    in_src_image = Input(shape=gen_out_shape)
+    # target image input
+    in_target_image = Input(shape=tar_image_shape)
+    # concatenate images channel-wise
+    merged = Concatenate(axis=-1)([in_src_image, in_target_image])
+    # C64
+    d = Conv2D(64, (4,4), strides=(2,2), padding='same', kernel_initializer=init)(merged)
+    d = LeakyReLU(alpha=0.2)(d)
     # C128
-    d = Conv2D(128, (3, 3), strides=(1, 1), padding="same", kernel_initializer=init)(
-        in_image
-    )
-    d = MaxPooling2D(pool_size=(2, 2))(d)
+    d = Conv2D(128, (4,4), strides=(2,2), padding='same', kernel_initializer=init)(d)
+    d = BatchNormalization()(d)
     d = LeakyReLU(alpha=0.2)(d)
-
     # C256
-    d = Conv2D(256, (3, 3), strides=(1, 1), padding="same", kernel_initializer=init)(d)
-    d = MaxPooling2D(pool_size=(2, 2))(d)
+    d = Conv2D(256, (4,4), strides=(2,2), padding='same', kernel_initializer=init)(d)
     d = BatchNormalization()(d)
     d = LeakyReLU(alpha=0.2)(d)
-
     # C512
-    d = Conv2D(512, (3, 3), strides=(1, 1), padding="same", kernel_initializer=init)(d)
-    d = MaxPooling2D(pool_size=(2, 2))(d)
+    d = Conv2D(512, (4,4), strides=(2,2), padding='same', kernel_initializer=init)(d)
     d = BatchNormalization()(d)
     d = LeakyReLU(alpha=0.2)(d)
-
-    # C512
-    d = Conv2D(512, (3, 3), strides=(1, 1), padding="same", kernel_initializer=init)(d)
-    d = MaxPooling2D(pool_size=(2, 2))(d)
+    # second last output layer
+    d = Conv2D(512, (4,4), padding='same', kernel_initializer=init)(d)
     d = BatchNormalization()(d)
     d = LeakyReLU(alpha=0.2)(d)
-
-    # Patch output
-    d = Conv2D(1, (4, 4), strides=(2, 2), padding="same", kernel_initializer=init)(d)
-    d = Activation("sigmoid")(d)
-
-    model = Model(in_image, d)
-    model.compile(
-        loss="mse", optimizer=Adam(learning_rate=0.0002, beta_1=0.5), loss_weights=[0.5]
-    )
+    # patch output
+    d = Conv2D(1, (4,4), padding='same', kernel_initializer=init)(d)
+    patch_out = Activation('sigmoid')(d)
+    # define model
+    model = Model([in_target_image, in_src_image], patch_out)
+    # Adam optimizer
+    opt = Adam(learning_rate=0.0002, beta_1=0.5)
+    # Compile model with binary crossentropy loss
+    model.compile(loss="binary_crossentropy", optimizer=opt, loss_weights=[0.5])
     return model
 
 
-def encoder_block(layer_in, n_filters, batchnorm=True):
-    init = RandomNormal(stddev=0.02)
-
+# define an encoder block
+def define_encoder_block(layer_in, n_filters, batchnorm=True, n_extra_layers=0):
+    # weight initialization
+    init = RandomNormal(stddev=0.02, seed=int(time.time())+1)
+    # add downsampling layer
     g = Conv2D(
-        n_filters, (3, 3), strides=(1, 1), padding="same", kernel_initializer=init
+        n_filters, (4, 4), strides=(2, 2), padding="same", kernel_initializer=init
     )(layer_in)
+    # conditionally add batch normalization
     if batchnorm:
         g = BatchNormalization()(g, training=True)
+    # leaky relu activation
     g = LeakyReLU(alpha=0.2)(g)
 
-    skip = Conv2D(
-        n_filters, (3, 3), strides=(1, 1), padding="same", kernel_initializer=init
-    )(g)
-    g = MaxPooling2D(pool_size=(2, 2))(skip)
-    if batchnorm:
-        g = BatchNormalization()(g, training=True)
+    # add dilated kernel n times
+    for i in range(n_extra_layers):
+        # add dilated convolutional layer with 5x5 kernel size
+        g = Conv2D(
+            n_filters, (5, 5), strides=(1, 1), dilation_rate=(2, 2), padding="same", kernel_initializer=init
+        )(g)
+        # conditionally add batch normalization
+        if batchnorm:
+            g = BatchNormalization()(g, training=True)
+        # leaky relu activation
+        g = LeakyReLU(alpha=0.2)(g)
+        
+    return g
 
-    g = LeakyReLU(alpha=0.2)(g)
-    return g, skip
 
-
-def decoder_block(layer_in, skip_in, n_filters, dropout=True):
-    init = RandomNormal(stddev=0.02)
-
-    # concatenate
-    g = Concatenate()([layer_in, skip_in])
-    g = Activation("relu")(g)
-
-    # convolution, reduced features
-    g = Conv2D(
-        n_filters, (3, 3), strides=(1, 1), padding="same", kernel_initializer=init
-    )(g)
-    g = BatchNormalization()(g, training=True)
-    g = LeakyReLU(alpha=0.2)(g)
-
-    g = Conv2D(
-        n_filters, (3, 3), strides=(1, 1), padding="same", kernel_initializer=init
-    )(g)
-    g = BatchNormalization()(g, training=True)
-    g = LeakyReLU(alpha=0.2)(g)
-
-    # upsampling
+# define a decoder block
+def decoder_block(layer_in, skip_in, n_filters, dropout=False, n_extra_layers=0):
+    # weight initialization
+    init = RandomNormal(stddev=0.02, seed=int(time.time())+2)
+    # add upsampling layer
     g = Conv2DTranspose(
-        n_filters, (3, 3), strides=(2, 2), padding="same", kernel_initializer=init
-    )(g)
+        n_filters, (4, 4), strides=(2, 2), padding="same", kernel_initializer=init
+    )(layer_in)
+    # add batch normalization
     g = BatchNormalization()(g, training=True)
-    if dropout:
-        g = Dropout(0.5)(g, training=True)
+    # LeakyReLU activation function
+    g = LeakyReLU(alpha=0.2)(g)
+    # concatenate with skip connection
+    g = Concatenate()([g, skip_in])
+
+    # add a dilated kernel n times
+    for i in range(n_extra_layers):
+        # add dilated convolutional layer with 5x5 kernel size
+        g = Conv2D(
+            n_filters, (5, 5), strides=(1, 1), dilation_rate=(2, 2) , padding="same", kernel_initializer=init
+        )(g)
+        # add batch normalization
+        g = BatchNormalization()(g, training=True)
+        # LeakyReLU activation function
+        g = LeakyReLU(alpha=0.2)(g)
 
     return g
 
 
+# define the standalone generator model
 def define_generator(image_shape=(256, 256, 3)):
-    init = RandomNormal(stddev=0.02)
-
+    # weight initialization
+    init = RandomNormal(stddev=0.02, seed=int(time.time())+3)
+    # image input
     in_image = Input(shape=image_shape)
-
     # encoder model
-    e, s1 = encoder_block(in_image, 64, batchnorm=False)  # o 128
-    e, s2 = encoder_block(e, 128)  # O 64
-    e, s3 = encoder_block(e, 256)  # O 32
-    e, s4 = encoder_block(e, 512)  # O 16
-    e, s5 = encoder_block(e, 1024)  # O 8
+    e1 = define_encoder_block(in_image, 64, batchnorm=False)
+    e2 = define_encoder_block(e1, 128)
+    e3 = define_encoder_block(e2, 256, n_extra_layers=1)
+    e4 = define_encoder_block(e3, 512, n_extra_layers=1)
+    e5 = define_encoder_block(e4, 512, n_extra_layers=1)
+    e6 = define_encoder_block(e5, 512, n_extra_layers=2)
+    e7 = define_encoder_block(e6, 512, n_extra_layers=2)
 
-    # bottom of U
-    g = Conv2D(1024, (3, 3), strides=(1, 1), padding="same", kernel_initializer=init)(e)
-    g = BatchNormalization()(g, training=True)
-    g = LeakyReLU(alpha=0.2)(g)
-
-    g = Conv2DTranspose(
-        1024, (3, 3), strides=(2, 2), padding="same", kernel_initializer=init
-    )(g)
-    g = BatchNormalization()(g, training=True)
-    g = Dropout(0.5)(g, training=True)
+     # bottleneck, no batch norm and relu
+    b = Conv2D(512, (4,4), strides=(2,2), padding='same', kernel_initializer=init)(e7)
+    b = Activation('relu')(b)
 
     # decoder model
-    d = decoder_block(g, s5, 512)  # O 32
-    d = decoder_block(d, s4, 256)  # O 64
-    d = decoder_block(d, s3, 128, dropout=False)  # O 128
-    d = decoder_block(d, s2, 128, dropout=False)  # O 256
-
-    # output section
-    d = Concatenate()([d, s1])
-    d = Activation("relu")(d)
-
-    d = Conv2D(64, (3, 3), strides=(1, 1), padding="same", kernel_initializer=init)(d)
-    d = BatchNormalization()(d, training=True)
-    d = LeakyReLU(alpha=0.2)(d)
-
-    out_image = Conv2D(
-        1, (1, 1), strides=(1, 1), padding="same", kernel_initializer=init
-    )(d)
-    out_image = Activation("tanh")(out_image)
+    d1 = decoder_block(b, e7, 512, n_extra_layers=2)
+    d2 = decoder_block(d1, e6, 512, n_extra_layers=1)
+    d3 = decoder_block(d2, e5, 512, n_extra_layers=1)
+    d4 = decoder_block(d3, e4, 512, n_extra_layers=1)
+    d5 = decoder_block(d4, e3, 256, n_extra_layers=1)
+    d6 = decoder_block(d5, e2, 128)
+    d7 = decoder_block(d6, e1, 64)
+    # output
+    g = Conv2DTranspose(1, (4,4), strides=(2,2), padding='same', kernel_initializer=init)(d7)
+    out_image = Activation('tanh')(g)
 
     model = Model(in_image, out_image)
     return model
 
 
+# define the combined generator and discriminator model, for updating the generator
 def define_gan(g_model, d_model, image_shape):
+    # make weights in the discriminator not trainable
     for layer in d_model.layers:
         if not isinstance(layer, BatchNormalization):
             layer.trainable = False
-
+    # define the source image
     in_src = Input(shape=image_shape)
-
+    # connect the source image to the generator input
     gen_out = g_model(in_src)
-    dis_out = d_model(in_src)
-
+    # connect the source input and generator output to the discriminator input
+    dis_out = d_model([in_src, gen_out])
+    # src image as input, generated image and classification output
     model = Model(in_src, [dis_out, gen_out])
-    model.summary()
-
+    # declare optimizer Adam 
     opt = Adam(learning_rate=0.0002, beta_1=0.5)
+    # compile the model with binary_ce for discriminator loss and mae for generator loss
     model.compile(
         loss=["binary_crossentropy", "mae"], optimizer=opt, loss_weights=[1, 100]
     )
     return model
-
-
-def summarizePerformance(
-    step, g_model, test_data_size, train_data_size, data, n_samples=3
-):
-    data.setIndex(train_data_size)
-    # plot real input images
-    for i in range(n_samples):
-        data.loadImage(i)
-        inputImage, _ = data.getImages()
-        pyplot.subplot(3, n_samples, 1 + i)
-        pyplot.axis("off")
-        pyplot.imshow(inputImage[:, :, 0])
-        data.iterateImage()
-
-    data.setIndex(train_data_size)
-    # plot generator output
-    for i in range(n_samples):
-        data.loadImage(i)
-        inputImage, _ = data.getImages()
-        inputImage = np.expand_dims(inputImage, axis=0)
-        fake = g_model.predict(inputImage)
-        fake = np.squeeze(fake)
-        pyplot.subplot(3, n_samples, 1 + n_samples + i)
-        pyplot.axis("off")
-        pyplot.imshow(fake)
-        data.iterateImage()
-
-    data.setIndex(train_data_size)
-
-    for i in range(n_samples):
-        data.loadImage(i)
-        _, outputImage = data.getImages()
-        pyplot.subplot(3, n_samples, 1 + n_samples * 2 + i)
-        pyplot.axis("off")
-        pyplot.imshow(outputImage[:, :, 0])
-        data.iterateImage()
-
-    filename1 = "training_data/plot_%06d.png" % (step + 1)
-    pyplot.savefig(filename1)
-    pyplot.close()
-
-    filename2 = "training_data/model_%06d.h5" % (step + 1)
-
-    g_model.save(filename2)
-    print(">Saved: %s and %s" % (filename1, filename2))
-
-
-def train(d_model, g_model, gan_model, n_epochs=100, n_batch=1):
-    train_data_size = 1000
-    test_data_size = 100
-    n_patch = d_model.output_shape[1]
-
-    data = ErosionData("/mnt/ml/Data/")
-
-    bat_per_epo = int(train_data_size / n_batch)
-
-    n_steps = bat_per_epo * n_epochs
-
-    for i in range(n_steps):
-        if not data.loadImage(0):
-            print("The data pointer exceeds the size of the dataset.")
-            return
-
-        inputImage, outputImage = data.getImages()
-        # DEM = inputImage[:, :, 0]
-        softness = inputImage[:, :, 1]
-        strength = inputImage[:, :, 2]
-        outputDEM = outputImage[:, :, 0]
-
-        y_fake = np.zeros((1, 8, 8, 1))
-        y_real = np.ones((1, 8, 8, 1))
-
-        x_real = np.stack([outputDEM, softness, strength], axis=-1)
-        x_real = np.expand_dims(x_real, axis=0)
-
-        d_loss1 = d_model.train_on_batch(x_real, y_real)
-
-        inputImage = np.expand_dims(inputImage, axis=0)
-        fake = g_model.predict(inputImage)
-        fake = np.squeeze(fake)
-        x_fake = np.stack([fake, softness, strength], axis=-1)
-        x_fake = np.expand_dims(x_fake, axis=0)
-
-        d_loss2 = d_model.train_on_batch(x_fake, y_fake)
-
-        g_loss, gen_loss, d_loss3 = gan_model.train_on_batch(
-            inputImage,
-            [y_real, np.expand_dims(np.expand_dims(outputDEM, axis=0), axis=-1)],
-        )
-
-        print(">%d, d1[%.3f] d2[%.3f] gan[%.3f]" % (i + 1, d_loss1, d_loss2, g_loss))
-        print("gen[%.3f], d3[%.3f]" % (gen_loss, d_loss3))
-
-        if (i + 1) % (train_data_size) == 0:
-            summarizePerformance(i, g_model, test_data_size, train_data_size, data)
-            data.setIndex(0)

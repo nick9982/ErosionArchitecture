@@ -65,11 +65,8 @@ def generate_real_samples(path, n_samples, patch_shape, rangeBeg=0, rangeEnd=219
     return np.array(X1), np.array(X2), y
 
 
-X_realA, X_realB, Y_real = generate_real_samples('/home/dave01/ComplexData/', 150, 1, 2000, 2200)
+X_realA, X_realB, Y_real = generate_real_samples('/home/dave01/ComplexData/', 32, 1, 2000, 2200)
 
-start = time.time()
-o = loaded_model.predict(X_realA)
-print("Time: " + str(time.time() - start))
 
 def saveAllImages(inp, o, real):
     for i in range(len(o)):
@@ -81,7 +78,14 @@ def saveAllImages(inp, o, real):
         cv2.imwrite("real_"+str(i)+".png", x)
 
 
-saveAllImages(X_realA, o, X_realB)
+for i in range(30):
+    start = time.time()
+    o = loaded_model.predict(X_realA)
+    print("Time: " + str(time.time() - start))
+
+    saveAllImages(X_realA, o, X_realB)
+
+
 
 def ErosionOnFile(filename, loaded_model, outname):
     pixels_in = imageio.imread(filename)
