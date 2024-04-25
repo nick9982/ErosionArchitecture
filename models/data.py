@@ -88,7 +88,7 @@ def generate_fake_samples(g_model, samples, patch_shape):
     y = ones((len(X), patch_shape, patch_shape, 1))
     return X, y
 
-def fill_directories(n, start, end, real_path, fake_path, data_path):
+def fill_directories(n, start, end, real_path, fake_path, data_path, g_model):
     while n > 0:
         X_realA, X_realB, _ = generate_real_samples(data_path, 4, 30, start, end)
         X_fakeB, _ = generate_fake_samples(g_model, X_realA, 30)
