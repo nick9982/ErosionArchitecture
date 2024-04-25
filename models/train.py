@@ -1,7 +1,7 @@
 from data import generate_real_samples, generate_fake_samples, fill_directories, storeData
 from model import define_discriminator, define_generator, define_gan
 import numpy as np
-from eval import graphGANLoss, saveLPIPScores, summarize_performance, plotMAE
+from eval import graphGANLoss, saveLPIPScores, summarize_performance, plotMAE, lpips_eval, mae
 
 # train pix2pix models
 # dataset size I set to 4000 because of our data augmentation. The data set training size is truly 2200 images. 
@@ -53,9 +53,9 @@ def train(d_model, g_model, gan_model, dataPath, n_epochs=200, n_batch=4, n_crit
             # twice per epoch we evaluate lpips and mae. We use these to create a graph
         if (i + 1) % 500 == 0:
             # fill_directories specified with validation data
-            fill_directories(128, 2300, 2450, 'tmp_validation_data/real/', 'tmp_validation_data/fake/', dataPath)
+            fill_directories(128, 2300, 2450, 'tmp_validation_data/real/', 'tmp_validation_data/fake/', dataPath, g_model)
             # fill_directories specified with training data
-            fill_directories(128, 0, 2299, 'tmp_training_data/real/', 'tmp_training_data/fake/', dataPath)
+            fill_directories(128, 0, 2299, 'tmp_training_data/real/', 'tmp_training_data/fake/', dataPath, g_model)
             # evaluate lpips for both training data and validation data
             storeData('lpips_val.txt', lpips_eval('tmp_validation_data/real/', 'tmp_validation_data/fake/'))
             storeData('lpips_training.txt', lpips_eval('tmp_training_data/real/', 'tmp_training_data/fake/'))
